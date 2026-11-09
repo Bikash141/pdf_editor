@@ -766,16 +766,31 @@ def _size(n):
     n = n or 0
     return f'{n} B' if n < 1024 else f'{n/1024:.0f} KB' if n < 1048576 else f'{n/1048576:.1f} MB'
 
+
 if __name__ == '__main__':
     import sys
+
     db.init_db()
+
     if sys.argv[1:2] == ['set-admin-password']:
         import getpass
+
         u = input('Admin username [superadmin]: ').strip() or 'superadmin'
         pw = getpass.getpass('New password (min 8 chars): ')
+
         if len(pw) < 8:
             sys.exit('Password too short')
+
         db.upsert_admin(u, generate_password_hash(pw))
         sys.exit(f'Password set for {u}')
+
     seed_admin()
-    app.run(port=5000)
+
+    # Local development server with automatic reload
+    app.run(
+        host='127.0.0.1',
+        port=5000,
+        debug=True,
+        use_reloader=True
+    )
+
