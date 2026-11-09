@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+{% set page_title = "Superadmin – BP" %}
+<head>
+{% include "partials/head.html" %}
+<link rel="stylesheet" href="/admin.css">
+<meta name="robots" content="noindex">
+</head>
+<body>
+<div class="adm">
+  <div class="adm-top">
+    <h1>Superadmin dashboard</h1>
+    <span class="hint">Signed in as {{ session.admin }}</span>
+    <form method="post" action="/admin/logout"><button class="btn ghost sm" type="submit">Sign out</button></form>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><b>{{ totals.total }}</b><span>Operations total</span></div>
+    <div class="stat"><b>{{ totals.last_24h|int }}</b><span>Last 24 hours</span></div>
+    <div class="stat"><b>{{ ((totals.ok / totals.total * 100) if totals.total else 100)|round(1) }}%</b><span>Success rate</span></div>
+    <div class="stat"><b>{{ totals.avg_ms|round|int }} ms</b><span>Avg duration</span></div>
+    <div class="stat"><b>{{ totals.in_bytes|int|size }}</b><span>Data processed</span></div>
+    <div class="stat"><b>{{ sessions_n }}</b><span>Open editor sessions</span></div>
+    <div class="stat"><b>{{ saves }}</b><span>Editor saves</span></div>
+  </div>
+
+  <h2>By tool</h2>
+  <div class="tbl-wrap"><table class="t">
+    <tr><th>Tool</th><th>Runs</th><th>Failed</th></tr>
+    {% for r in by_tool %}<tr><td><a href="?tool={{ r.tool }}">{{ r.tool }}</a></td><td>{{ r.n }}</td><td>{{ r.failed|int }}</td></tr>
+    {% else %}<tr><td colspan="3">No operations yet.</td></tr>{% endfor %}
+  </table></div>
+
+  <h2>Recent operations</h2>
+  <form class="filters" method="get">
+    <select name="tool" onchange="this.form.submit()">
+      <option value="">All tools</option>
+      {% for r in by_tool %}<option value="{{ r.tool }}" {{ 'selected' if r.tool == tool }}>{{ r.tool }}</option>{% endfor %}
+    </select>
+    <label><input type="checkbox" name="failed" value="1" {{ 'checked' if failed }} onchange="this.form.submit()"> Failures only</label>
+    {% if tool or failed %}<a href="/admin">Reset</a>{% endif %}
+  </form>
+  <div class="tbl-wrap"><table class="t">
+    <tr><th>When</th><th>Tool</th><th>File</th><th>In</th><th>Out</th><th>Time</th><th>Status</th><th>IP</th><th>Error</th></tr>
+    {% for o in ops %}<tr>
+      <td>{{ o.created_at }}</td><td>{{ o.tool }}</td><td class="wrap-cell">{{ o.filename }}</td>
+      <td>{{ o.input_bytes|size }}</td><td>{{ o.output_bytes|size if o.output_bytes is not none else '–' }}</td>
+      <td>{{ o.duration_ms }} ms</td>
+      <td><span class="pill {{ 'ok' if o.success else 'bad' }}">{{ o.status_code }}</span></td>
+      <td>{{ o.client_ip }}</td><td class="wrap-cell">{{ o.error or '' }}</td>
+    </tr>{% else %}<tr><td colspan="9">Nothing matches.</td></tr>{% endfor %}
+  </table></div>
+
+  <h2>Editor sessions</h2>
+  <div class="tbl-wrap"><table class="t">
+    <tr><th>Session</th><th>File</th><th>Pages</th><th>Size</th><th>Last active</th><th></th></tr>
+    {% for s in sessions %}<tr>
+      <td>{{ s.sid[:8] }}…</td><td class="wrap-cell">{{ s.filename }}</td><td>{{ s.page_count }}</td>
+      <td>{{ s.size_bytes|size }}</td><td>{{ s.updated_at }}</td>
+      <td><form method="post" action="/admin/sessions/{{ s.sid }}/delete" style="margin:0"><button class="link-btn" type="submit">Delete</button></form></td>
+    </tr>{% else %}<tr><td colspan="6">No open sessions.</td></tr>{% endfor %}
+  </table></div>
+</div>
+</body>
+</html>

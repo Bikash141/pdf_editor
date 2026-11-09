@@ -1,0 +1,8 @@
+flask
+pymupdf
+pypdf
+reportlab
+pdf2docx
+lxml
+pymysql
+cryptography

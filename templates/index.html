@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 21s-8-5.2-8-11.2C4 6.800 6.100 5 8.400 5c1.600 0 2.900.9 3.600 2.200C12.700 5.900 14 5 15.600 5 17.900 5 20 6.800 20 9.800 20 15.800 12 21 12 21z"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12m0 0 5-5m-5 5-5-5M4 20h16"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.500" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.500 4.500 4.500L19 7.500"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5zM3 13l9 5 9-5"/></symbol>
+  <symbol id="i-zip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8M1 3h22v5H1zM10 12h4"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.500" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.500" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.500" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z"/></symbol>
+</svg>
+
+{% include "partials/header.html" %}
+
+<main id="top">
+  <section class="hero wrap">
+    <span class="badge"><svg><use href="#i-lock"/></svg> 100% private · runs on your PC</span>
+    <h1 id="title"></h1>
+    <p id="lead"></p>
+  </section>
+
+  <div class="tool">
+    <div class="panel">
+      <div class="drop" id="drop">
+        <div class="cloud"><svg><use href="#i-upload"/></svg></div>
+        <button class="btn" id="pick"><svg><use href="#i-doc"/></svg> <span id="pickLabel">Select WORD files</span></button>
+        <div class="hint" id="dropHint">or drop DOC / DOCX files here</div>
+        <input type="file" id="input" accept=".doc,.docx" multiple hidden>
+      </div>
+
+      <div class="toolbar" id="toolbar">
+        <span id="count"></span><span class="grow"></span>
+        <button class="link-btn" id="clear">Clear all</button>
+      </div>
+      <div id="files" aria-live="polite"></div>
+      <div class="progress" id="progress" role="progressbar" aria-label="Conversion progress"><div></div></div>
+
+      <div class="opts" id="opts"></div>
+      <div class="actions" id="actions">
+        <button class="btn" id="convert"><span id="convertLabel">Convert to PDF</span> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.500" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button>
+      </div>
+      <div class="actions" id="results">
+        <button class="btn ghost" id="zip"><svg><use href="#i-zip"/></svg> Download all (ZIP)</button>
+        <button class="btn ghost" id="merge"><svg><use href="#i-layers"/></svg> Merge into one PDF</button>
+      </div>
+    </div>
+    <div class="trust" id="trust"></div>
+  </div>
+
+  <div class="editor wrap" id="editorApp" hidden>
+    <div class="ed-intro">
+      <h1>Edit PDF <em>online</em></h1>
+      <p>Edit text, add images, highlight, draw and export — all privately on your PC.</p>
+      <ul>
+        <li>Edit existing text</li><li>Add text &amp; images</li><li>Highlight &amp; cover</li><li>Save as PDF or Word</li>
+      </ul>
+    </div>
+    <div class="panel" id="edOpen">
+      <div class="drop" id="edDrop">
+        <div class="cloud"><svg><use href="#i-upload"/></svg></div>
+        <button class="btn" id="edPick"><svg><use href="#i-doc"/></svg> Select PDF file</button>
+        <div class="hint">or drop a PDF here</div>
+        <input type="file" id="edInput" accept=".pdf" hidden>
+      </div>
+    </div>
+    <div id="edMain" hidden>
+      <div class="ed-bar" id="edBar">
+        <div class="grp" id="edTools">
+          <button data-tool="select" class="active" title="Click any text to edit it; click an added item to select it">Edit text</button>
+          <button data-tool="text" title="Click on the page to add text">Add text</button>
+          <button data-tool="highlight" title="Drag to highlight an area">Highlight</button>
+          <button data-tool="whiteout" title="Drag to cover an area with a solid box">Cover</button>
+          <button data-tool="draw" title="Draw freehand">Draw</button>
+          <button id="edImg" title="Add an image (or paste / drop one anywhere on the page)">Image</button>
+          <input type="file" id="edImgInput" accept="image/*" multiple hidden>
+        </div>
+        <div class="grp">
+          <label title="Shape used by Cover and Highlight">Shape <select id="edShape"><option value="rect">Rectangle</option><option value="round">Rounded</option><option value="ellipse">Ellipse</option></select></label>
+          <label title="Color">Color<input type="color" id="edColor" value="#000000"></label>
+          <label title="Text size in points / pen width">Size <input type="number" id="edSize" min="1" max="200" value="12"></label>
+        </div>
+        <div class="grp">
+          <button id="edUndo" title="Undo (Ctrl+Z)" disabled>Undo</button>
+          <button id="edRedo" title="Redo (Ctrl+Y)" disabled>Redo</button>
+          <button id="edZoomOut" title="Zoom out" aria-label="Zoom out">−</button>
+          <span id="edZoomLbl">140%</span>
+          <button id="edZoomIn" title="Zoom in" aria-label="Zoom in">+</button>
+        </div>
+        <div class="grp end">
+          <button class="btn sm" id="edSavePdf">Save as PDF</button>
+          <button class="btn sm ghost" id="edSaveDocx">Save as Word</button>
+          <button class="link-btn" id="edClose">Close file</button>
+        </div>
+      </div>
+      <div class="ed-name" id="edName"></div>
+      <div id="edPages"></div>
+    </div>
+  </div>
+
+  <section class="block wrap" id="how">
+    <div class="eyebrow">How it works</div>
+    <h2 id="howTitle">Three simple steps</h2>
+    <p class="sub" id="howSub"></p>
+      <div id="steps" class="grid-3"></div>
+  </section>
+
+  <section class="block wrap" id="features">
+    <div class="eyebrow">Features</div>
+    <h2>Everything you need, nothing you don’t</h2>
+    <p class="sub">Built for people who handle documents every day and care about privacy.</p>
+    <div class="grid-3">
+      <div class="card"><div class="ci"><svg><use href="#i-lock"/></svg></div><h3>Private by design</h3><p>Files are converted locally and never leave your machine. No cloud, no tracking.</p></div>
+      <div class="card"><div class="ci"><svg><use href="#i-doc"/></svg></div><h3>Faithful output</h3><p>Word files are rendered by Microsoft Word itself, keeping fonts, tables, headers and page breaks intact.</p></div>
+      <div class="card"><div class="ci"><svg><use href="#i-zap"/></svg></div><h3>Batch conversion</h3><p>Queue many documents at once with a live progress bar and one-click retry on failures.</p></div>
+      <div class="card"><div class="ci"><svg><use href="#i-layers"/></svg></div><h3>Merge PDFs</h3><p>Reorder your files and combine them into a single PDF in one click.</p></div>
+      <div class="card"><div class="ci"><svg><use href="#i-zip"/></svg></div><h3>ZIP download</h3><p>Download every converted file together in a single tidy archive.</p></div>
+      <div class="card"><div class="ci"><svg><use href="#i-moon"/></svg></div><h3>Light &amp; dark mode</h3><p>Follows your system theme, with a manual toggle in the header.</p></div>
+    </div>
+  </section>
+
+  <section class="block wrap" id="faq">
+    <div class="eyebrow">FAQ</div>
+    <h2>Frequently asked questions</h2>
+    <p class="sub">Quick answers to common questions.</p>
+    <div class="faq">
+      <div id="faqList"></div>
+    </div>
+  </section>
+</main>
+
+{% include "partials/footer.html" %}
+<div id="toasts" aria-live="assertive"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

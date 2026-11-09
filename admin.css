@@ -1,0 +1,26 @@
+.adm { max-width: 1180px; margin: 0 auto; padding: 24px; }
+.adm-top { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+.adm-top h1 { margin: 0; font-size: 26px; flex: 1; }
+.adm-top form { margin: 0; }
+.stats { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 24px; }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
+.stat b { display: block; font-size: 26px; letter-spacing: -.02em; }
+.stat span { color: var(--muted); font-size: 13px; font-weight: 600; }
+.adm h2 { font-size: 18px; margin: 28px 0 10px; }
+.tbl-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+table.t { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.t th, table.t td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.t td.wrap-cell { white-space: normal; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+table.t th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+table.t tr:last-child td { border-bottom: 0; }
+.pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.bad { background: color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
+.filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.filters select, .login input { font: inherit; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--text); }
+.login { max-width: 380px; margin: 12vh auto 0; background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 28px; box-shadow: var(--shadow); }
+.login h1 { margin: 0 0 18px; font-size: 24px; }
+.login label { display: block; font-weight: 700; font-size: 14px; margin: 12px 0 6px; }
+.login input { width: 100%; }
+.login .btn { width: 100%; justify-content: center; margin-top: 20px; }
+.login .err { color: var(--err); font-weight: 600; margin-top: 12px; }
