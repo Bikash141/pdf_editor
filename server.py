@@ -6,7 +6,8 @@ from reportlab.pdfgen import canvas
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.exceptions import HTTPException
-from flask import Flask, request, send_file, send_from_directory, abort, render_template, session, redirect, url_for
+from flask import Flask, request, send_file, send_from_directory, abort, render_template, session, redirect, url_for, Response
+from urllib.parse import urlencode
 import db
 import secrets, functools
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -736,15 +737,79 @@ def admin_logout():
     session.clear()
     return redirect(url_for('admin_login'))
 
+def _pager(page, per_page, total, endpoint_args):
+    """Pagination model: page window with ellipses, plus a URL builder bound to the current filters."""
+    pages = max(1, -(-total // per_page))
+    page = min(max(1, page), pages)
+    nums = sorted({1, pages, *range(max(1, page - 1), min(pages, page + 1) + 1)})
+    items, prev = [], 0
+    for n in nums:
+        if n - prev > 1:
+            items.append(None)
+        items.append(n)
+        prev = n
+    return dict(page=page, pages=pages, total=total, per_page=per_page, items=items,
+                first=(page - 1) * per_page + 1 if total else 0, last=min(page * per_page, total))
+
+def _int(name, default, lo=1, hi=100000):
+    try:
+        return min(max(int(request.args.get(name, default)), lo), hi)
+    except ValueError:
+        return default
+
+def _op_filters():
+    status = request.args.get('status')
+    if request.args.get('failed') == '1':  # legacy link
+        status = 'failed'
+    return (request.args.get('tool') or None, status if status in ('ok', 'failed') else None,
+            (request.args.get('q') or '').strip()[:100] or None)
+
 @app.get('/admin')
 @admin_required
 def admin_dashboard():
-    totals, by_tool, sessions, saves = db.admin_stats()
-    tool = request.args.get('tool') or None
-    failed = request.args.get('failed') == '1'
-    return render_template('admin.html', totals=totals, by_tool=by_tool, sessions_n=sessions, saves=saves,
-                           ops=db.recent_operations(100, tool, failed), sessions=db.list_sessions(50),
-                           tool=tool, failed=failed)
+    from datetime import date, timedelta
+    totals, by_tool, sessions_n, saves = db.admin_stats()
+    tool, status, q = _op_filters()
+    per = _int('per', 10, 5, 100)
+    if per not in (10, 25, 50, 100):
+        per = 10
+    # clamp page against the real total
+    _, total = db.recent_operations(1, 1, tool, status, q)
+    ops_pg = _pager(_int('page', 1), per, total, None)
+    ops, _ = db.recent_operations(ops_pg['page'], per, tool, status, q)
+    _, s_total = db.list_sessions(1, 1)
+    s_pg = _pager(_int('sp', 1), 10, s_total, None)
+    sess, _ = db.list_sessions(s_pg['page'], 10)
+    # fill missing days for the activity chart
+    got = {str(r['d']): r for r in db.ops_per_day(14)}
+    days = []
+    for i in range(13, -1, -1):
+        d = date.today() - timedelta(days=i)
+        r = got.get(str(d))
+        days.append(dict(label=d.strftime('%d %b'), n=int(r['n']) if r else 0, failed=int(r['failed'] or 0) if r else 0))
+
+    def link(anchor='ops', **kw):
+        args = {k: v for k, v in request.args.items() if k != 'failed'}
+        args.update(kw)
+        return '/admin?' + urlencode({k: v for k, v in args.items() if v not in (None, '')}) + '#' + anchor
+
+    return render_template('admin.html', totals=totals, by_tool=by_tool, sessions_n=sessions_n, saves=saves,
+                           ops=ops, ops_pg=ops_pg, sessions=sess, s_pg=s_pg, days=days,
+                           tool=tool, status=status, q=q or '', per=per, link=link)
+
+@app.get('/admin/export.csv')
+@admin_required
+def admin_export():
+    import csv, io
+    tool, status, q = _op_filters()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(['id', 'when', 'tool', 'filename', 'input_bytes', 'output_bytes', 'duration_ms', 'status', 'ip', 'error'])
+    for o in db.all_operations(tool, status, q):
+        w.writerow([o['id'], o['created_at'], o['tool'], o['filename'], o['input_bytes'], o['output_bytes'],
+                    o['duration_ms'], o['status_code'], o['client_ip'], o['error'] or ''])
+    return Response(buf.getvalue(), mimetype='text/csv',
+                    headers={'Content-Disposition': 'attachment; filename=operations.csv'})
 
 @app.post('/admin/sessions/<sid>/delete')
 @admin_required

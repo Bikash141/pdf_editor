@@ -183,21 +183,53 @@ def admin_stats():
     return totals, by_tool, sessions, saves
 
 
-def recent_operations(limit=50, tool=None, failed_only=False):
-    sql, args = 'SELECT * FROM operations WHERE 1=1', []
+def _ops_where(tool=None, status=None, q=None):
+    sql, args = ' WHERE 1=1', []
     if tool:
         sql += ' AND tool = %s'; args.append(tool)
-    if failed_only:
+    if status == 'failed':
         sql += ' AND success = 0'
+    elif status == 'ok':
+        sql += ' AND success = 1'
+    if q:
+        like = '%' + q.replace('%', r'\%').replace('_', r'\_') + '%'
+        sql += ' AND (filename LIKE %s OR client_ip LIKE %s OR error LIKE %s)'; args += [like] * 3
+    return sql, args
+
+
+def recent_operations(page=1, per_page=10, tool=None, status=None, q=None):
+    """Return (rows, total) for one page of operations, newest first."""
+    where, args = _ops_where(tool, status, q)
     with cursor() as cur:
-        cur.execute(sql + ' ORDER BY id DESC LIMIT %s', args + [int(limit)])
+        cur.execute('SELECT COUNT(*) AS n FROM operations' + where, args)
+        total = cur.fetchone()['n']
+        cur.execute('SELECT * FROM operations' + where + ' ORDER BY id DESC LIMIT %s OFFSET %s',
+                    args + [int(per_page), max(0, (int(page) - 1) * int(per_page))])
+        return cur.fetchall(), total
+
+
+def all_operations(tool=None, status=None, q=None, limit=50000):
+    where, args = _ops_where(tool, status, q)
+    with cursor() as cur:
+        cur.execute('SELECT * FROM operations' + where + ' ORDER BY id DESC LIMIT %s', args + [int(limit)])
         return cur.fetchall()
 
 
-def list_sessions(limit=50):
+def ops_per_day(days=14):
     with cursor() as cur:
-        cur.execute('SELECT * FROM editor_sessions ORDER BY updated_at DESC LIMIT %s', (int(limit),))
+        cur.execute('SELECT DATE(created_at) AS d, COUNT(*) AS n, SUM(1 - success) AS failed FROM operations '
+                    'WHERE created_at >= CURDATE() - INTERVAL %s DAY GROUP BY d ORDER BY d', (int(days) - 1,))
         return cur.fetchall()
+
+
+def list_sessions(page=1, per_page=10):
+    """Return (rows, total) for one page of editor sessions, most recently active first."""
+    with cursor() as cur:
+        cur.execute('SELECT COUNT(*) AS n FROM editor_sessions')
+        total = cur.fetchone()['n']
+        cur.execute('SELECT * FROM editor_sessions ORDER BY updated_at DESC LIMIT %s OFFSET %s',
+                    (int(per_page), max(0, (int(page) - 1) * int(per_page))))
+        return cur.fetchall(), total
 
 
 def delete_session(sid):
