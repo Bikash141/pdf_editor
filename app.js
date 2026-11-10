@@ -452,7 +452,19 @@ function removeExisting(pg, ix) {
   mutate(() => ed.ops.push({ id: ed.nid++, t: 'delimg', page: pg, xref: im.xref, bbox: im.bbox }));
   ed.selImg = null; ed.sel = null; renderPage(pg); updateControls();
 }
+const textDef = { serif: false, mono: false, bold: false, italic: false, underline: false, align: 'left', opacity: 1, fill: null };
+function syncTextOpts() {
+  const o = ed.sel && opById(ed.sel), isT = !!o && o.t === 'text';
+  el('edTextOpts').hidden = !(isT || (!o && ed.tool === 'text'));
+  const v = isT ? o : textDef;
+  el('edFont').value = v.mono ? 'mono' : v.serif ? 'serif' : 'sans';
+  el('edB').classList.toggle('active', !!v.bold); el('edI').classList.toggle('active', !!v.italic); el('edU').classList.toggle('active', !!v.underline);
+  el('edAlign').value = v.align || 'left';
+  el('edOpacity').value = Math.round((v.opacity == null ? 1 : v.opacity) * 100);
+  el('edBgOn').checked = !!v.fill; if (v.fill) el('edBg').value = v.fill;
+}
 function updateControls() {
+  syncTextOpts();
   const o = ed.sel && opById(ed.sel);
   if (o) {
     el('edColor').value = o.t === 'rect' || o.t === 'draw' || o.t === 'text' || o.t === 'replace' ? (o.color || '#000000') : '#000000';
@@ -478,6 +490,13 @@ function renderAll() { ed.pages.forEach((_, i) => renderPage(i)); }
 function styleText(n, o) {
   n.style.fontFamily = fam(o); n.style.fontWeight = o.bold ? 700 : 400; n.style.fontStyle = o.italic ? 'italic' : 'normal';
   n.style.fontSize = o.size * ed.zoom + 'px'; n.style.color = o.color;
+  if (o.t === 'text') {   // extra options only exist on text added by the user
+    n.style.textDecoration = o.underline ? 'underline' : 'none';
+    n.style.textAlign = o.align || 'left';
+    n.style.opacity = o.opacity == null ? 1 : o.opacity;
+    n.style.background = o.fill || 'transparent';
+    n.style.boxShadow = o.fill ? `0 0 0 ${2 * ed.zoom}px ${o.fill}` : 'none';
+  }
 }
 
 const area = b => (b[2] - b[0]) * (b[3] - b[1]);
@@ -747,7 +766,7 @@ function wireStage(stage, i) {
     const [x, y] = pt(ev, stage);
     if (t === 'text') {
       const before = clone(ed.ops), size = sizes.text;
-      const o = { id: ed.nid++, t: 'text', page: i, x: x, y: y - size * .6, text: '', size, color: colors.text };
+      const o = { id: ed.nid++, t: 'text', page: i, x: x, y: y - size * .6, text: '', size, color: colors.text, ...textDef };
       ed.ops.push(o);
       const n = drawOp(o, ov, ov.querySelector('svg.draws')); n.__start(before);
       n.querySelector('.tx').focus();
@@ -933,6 +952,29 @@ el('edSize').oninput = e => {
   if (o.t === 'draw') n && n.setAttribute('stroke-width', v * ed.zoom);
   else if (n) { const t = n.querySelector('.tx') || n; t.style.fontSize = v * ed.zoom + 'px'; }
 };
+// ---- Add-text options (apply to the selected text box, or become the defaults for the next one)
+function textTarget() { const o = ed.sel && opById(ed.sel); return o && o.t === 'text' ? o : null; }
+function setTextProp(patch, record = true) {
+  const o = textTarget();
+  if (!o) { Object.assign(textDef, patch); syncTextOpts(); return; }
+  const apply = () => Object.assign(o, patch);
+  record ? mutate(apply) : apply();
+  const n = document.querySelector(`#edPages [data-id="${o.id}"] .tx`); if (n) styleText(n, o);
+  syncTextOpts();
+}
+['edB', 'edI', 'edU'].forEach(id => {
+  const key = { edB: 'bold', edI: 'italic', edU: 'underline' }[id];
+  el(id).addEventListener('mousedown', ev => ev.preventDefault());   // keep the caret in the text box
+  el(id).onclick = () => { const o = textTarget(); setTextProp({ [key]: !(o ? o[key] : textDef[key]) }); };
+});
+el('edFont').onchange = e => setTextProp({ serif: e.target.value === 'serif', mono: e.target.value === 'mono' });
+el('edAlign').onchange = e => setTextProp({ align: e.target.value });
+let opBefore = null;
+el('edOpacity').addEventListener('pointerdown', () => { opBefore = clone(ed.ops); });
+el('edOpacity').oninput = e => setTextProp({ opacity: Number(e.target.value) / 100 }, false);
+el('edOpacity').onchange = () => { if (opBefore && textTarget()) commit(opBefore); opBefore = null; };
+const bgChange = () => setTextProp({ fill: el('edBgOn').checked ? el('edBg').value : null });
+el('edBgOn').onchange = bgChange; el('edBg').oninput = () => { el('edBgOn').checked = true; bgChange(); };
 document.addEventListener('keydown', ev => {
   if (el('editorApp').hidden || !ed.sid) return;
   const typing = isEditable(document.activeElement);

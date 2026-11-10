@@ -1,0 +1,47 @@
+{% extends "admin_base.html" %}
+{% set active = 'latest' %}
+{% block title %}Latest operations{% endblock %}
+{% block content %}
+  <div class="page-title">
+    <div><h1>Latest operations</h1><p>The 25 most recent conversions and editor actions, newest first.</p></div>
+    <div class="pt-actions">
+      <label class="live" id="liveLbl"><input type="checkbox" id="live"><i class="dot"></i>Auto-refresh (10s)</label>
+      <a class="btn ghost sm" href="/admin/latest">↻ Refresh</a>
+    </div>
+  </div>
+
+  <section class="card-s flush" aria-label="Latest operations">
+    {% if ops %}
+    <ul class="feed">
+      {% for o in ops %}
+      <li>
+        <div class="ic-s {{ '' if o.success else 'bad' }}"><svg><use href="{{ '#a-ok' if o.success else '#a-bad' }}"/></svg></div>
+        <div class="fm">
+          <div class="fn" title="{{ o.filename }}">{{ o.filename or '(no file)' }}</div>
+          <div class="fs"><span class="tag">{{ o.tool }}</span><span>{{ o.created_at }}</span><span>{{ o.input_bytes|size }}{% if o.output_bytes is not none %} → {{ o.output_bytes|size }}{% endif %}</span>{% if o.client_ip %}<span>{{ o.client_ip }}</span>{% endif %}</div>
+          {% if o.error %}<div class="fe">{{ o.error }}</div>{% endif %}
+        </div>
+        <div class="fr"><span class="pill {{ 'ok' if o.success else 'bad' }}">{{ o.status_code }}</span><span>{{ o.duration_ms }} ms</span></div>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="feed-foot"><span>Showing the latest {{ ops|length }} of {{ total }}</span><a class="btn ghost sm" href="/admin/operations">Search all operations →</a></div>
+    {% else %}
+    <div class="feed-empty">No operations yet.</div>
+    {% endif %}
+  </section>
+
+<script>
+(function () {
+  var box = document.getElementById('live'), lbl = document.getElementById('liveLbl'), t;
+  function on() { lbl.classList.add('on'); clearTimeout(t); t = setTimeout(function () { location.reload(); }, 10000); }
+  function off() { lbl.classList.remove('on'); clearTimeout(t); }
+  try { box.checked = localStorage.getItem('adm-live') === '1'; } catch (e) {}
+  if (box.checked) on();
+  box.onchange = function () {
+    try { localStorage.setItem('adm-live', box.checked ? '1' : '0'); } catch (e) {}
+    box.checked ? on() : off();
+  };
+})();
+</script>
+{% endblock %}

@@ -62,6 +62,7 @@
       <span class="kicker"><svg><use href="#i-lock"/></svg> Private · files never leave your PC</span>
       <h1>Edit PDF files <em>online</em></h1>
       <p>Edit text, add images, highlight, draw and export — all privately on your PC.</p>
+      <div class="cta-row"><a class="btn" href="#edPick" onclick="document.getElementById('edPick').click();return false;">Select PDF file</a><a class="btn ghost" href="#features">See features</a></div>
       <ul>
         <li>Edit existing text</li><li>Add text &amp; images</li><li>Highlight &amp; cover</li><li>Save as PDF or Word</li>
       </ul>
@@ -89,6 +90,15 @@
           <label title="Shape used by Cover and Highlight">Shape <select id="edShape"><option value="rect">Rectangle</option><option value="round">Rounded</option><option value="ellipse">Ellipse</option></select></label>
           <label title="Color">Color<input type="color" id="edColor" value="#000000"></label>
           <label title="Text size in points / pen width">Size <input type="number" id="edSize" min="1" max="200" value="12"></label>
+        </div>
+        <div class="grp txt-opts" id="edTextOpts" hidden>
+          <label title="Font family">Font <select id="edFont"><option value="sans">Sans</option><option value="serif">Serif</option><option value="mono">Mono</option></select></label>
+          <button type="button" id="edB" class="fmt" title="Bold" aria-label="Bold"><b>B</b></button>
+          <button type="button" id="edI" class="fmt" title="Italic" aria-label="Italic"><i>I</i></button>
+          <button type="button" id="edU" class="fmt" title="Underline" aria-label="Underline"><u>U</u></button>
+          <label title="Alignment (multi-line text)">Align <select id="edAlign"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
+          <label title="Text opacity">Opacity <input type="range" id="edOpacity" min="10" max="100" value="100"></label>
+          <label title="Fill a background behind the text"><input type="checkbox" id="edBgOn"> Background <input type="color" id="edBg" value="#ffff00"></label>
         </div>
         <div class="grp">
           <button id="edUndo" title="Undo (Ctrl+Z)" disabled>Undo</button>
@@ -118,13 +128,13 @@
   <section class="block wrap" id="features">
     <div class="eyebrow">Features</div>
     <h2>Everything you need, nothing you don’t</h2>
-    <p class="sub">Built for people who handle documents every day and care about privacy.</p>
+    <p class="sub">A complete PDF toolkit that is fast, private and simple to use.</p>
     <div class="grid-3">
-      <div class="card"><div class="ci"><svg><use href="#i-lock"/></svg></div><h3>Private by design</h3><p>Files are converted locally and never leave your machine. No cloud, no tracking.</p></div>
-      <div class="card"><div class="ci"><svg><use href="#i-doc"/></svg></div><h3>Faithful output</h3><p>Word files are rendered by Microsoft Word itself, keeping fonts, tables, headers and page breaks intact.</p></div>
-      <div class="card"><div class="ci"><svg><use href="#i-zap"/></svg></div><h3>Batch conversion</h3><p>Queue many documents at once with a live progress bar and one-click retry on failures.</p></div>
-      <div class="card"><div class="ci"><svg><use href="#i-layers"/></svg></div><h3>Merge PDFs</h3><p>Reorder your files and combine them into a single PDF in one click.</p></div>
-      <div class="card"><div class="ci"><svg><use href="#i-zip"/></svg></div><h3>ZIP download</h3><p>Download every converted file together in a single tidy archive.</p></div>
+      <div class="card"><div class="ci"><svg><use href="#i-doc"/></svg></div><h3>Edit existing text</h3><p>Click any line of text in your PDF and retype it. Font, size and colour are kept.</p></div>
+      <div class="card"><div class="ci"><svg><use href="#i-layers"/></svg></div><h3>Add text &amp; images</h3><p>Place new text or drop in logos and signatures, then move and resize them freely.</p></div>
+      <div class="card"><div class="ci"><svg><use href="#i-zap"/></svg></div><h3>Highlight, cover &amp; draw</h3><p>Mark up pages, redact with solid boxes or sketch freehand with undo and redo.</p></div>
+      <div class="card"><div class="ci"><svg><use href="#i-lock"/></svg></div><h3>Private by design</h3><p>Everything runs on your PC. No cloud, no tracking, no accounts.</p></div>
+      <div class="card"><div class="ci"><svg><use href="#i-download"/></svg></div><h3>Save as PDF or Word</h3><p>Export the finished file as a PDF, or as an editable Word document.</p></div>
       <div class="card"><div class="ci"><svg><use href="#i-moon"/></svg></div><h3>Light &amp; dark mode</h3><p>Follows your system theme, with a manual toggle in the header.</p></div>
     </div>
   </section>

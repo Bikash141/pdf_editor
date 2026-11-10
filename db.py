@@ -162,6 +162,11 @@ def upsert_admin(username, password_hash, role='superadmin'):
                     (username[:64], password_hash, role))
 
 
+def update_admin_password(admin_id, password_hash):
+    with cursor() as cur:
+        cur.execute('UPDATE admins SET password_hash = %s WHERE id = %s', (password_hash, admin_id))
+
+
 def touch_admin_login(admin_id):
     with cursor() as cur:
         cur.execute('UPDATE admins SET last_login = CURRENT_TIMESTAMP WHERE id = %s', (admin_id,))

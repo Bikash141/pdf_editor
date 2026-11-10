@@ -1,54 +1,21 @@
-<!DOCTYPE html>
-<html lang="en">
-{% set page_title = "Superadmin – BP" %}
-<head>
-{% include "partials/head.html" %}
-<link rel="stylesheet" href="/admin.css">
-<meta name="robots" content="noindex">
-</head>
-<body class="adm-body">
-
-{% macro pager(pg, key, anchor) %}
-{% if pg.total %}
-<nav class="pager" aria-label="Pagination">
-  <span class="pager-info">Showing <b>{{ pg.first }}–{{ pg.last }}</b> of <b>{{ pg.total }}</b></span>
-  <ul>
-    <li>{% if pg.page > 1 %}<a href="{{ link(anchor, **{key: pg.page - 1}) }}" aria-label="Previous page">‹ Prev</a>{% else %}<span class="dis">‹ Prev</span>{% endif %}</li>
-    {% for n in pg['items'] %}
-      {% if n is none %}<li><span class="gap">…</span></li>
-      {% elif n == pg.page %}<li><span class="cur" aria-current="page">{{ n }}</span></li>
-      {% else %}<li><a href="{{ link(anchor, **{key: n}) }}">{{ n }}</a></li>{% endif %}
-    {% endfor %}
-    <li>{% if pg.page < pg.pages %}<a href="{{ link(anchor, **{key: pg.page + 1}) }}" aria-label="Next page">Next ›</a>{% else %}<span class="dis">Next ›</span>{% endif %}</li>
-  </ul>
-</nav>
-{% endif %}
-{% endmacro %}
-
-<header class="adm-head">
-  <div class="adm-wrap adm-bar">
-    <a class="logo" href="/admin"><span class="mark">BP</span><span class="word">Admin</span></a>
-    <span class="grow"></span>
-    <span class="who"><i>{{ session.admin[:1]|upper }}</i><span>{{ session.admin }}</span></span>
-    <form method="post" action="/admin/logout"><button class="btn ghost sm" type="submit">Sign out</button></form>
-  </div>
-</header>
-
-<main class="adm-wrap adm">
+{% extends "admin_base.html" %}
+{% set active = 'dash' %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
   <div class="page-title">
-    <div><h1>Dashboard</h1><p>Usage across all tools, updated on every page load.</p></div>
-    <a class="btn ghost sm" href="/admin">↻ Refresh</a>
+    <div><h1>Dashboard</h1><p>Welcome back, {{ session.admin }}. Usage across all tools, updated on every page load.</p></div>
+    <div class="pt-actions"><a class="btn ghost sm" href="/admin">↻ Refresh</a><a class="btn sm" href="/admin/password">Change password</a></div>
   </div>
 
   {% set rate = ((totals.ok / totals.total * 100) if totals.total else 100)|round(1) %}
+  {% set failed_n = (totals.total - totals.ok)|int %}
   <section class="stats" aria-label="Summary">
-    <div class="stat"><span>Operations</span><b>{{ totals.total }}</b><small>all time</small></div>
-    <div class="stat"><span>Last 24 hours</span><b>{{ totals.last_24h|int }}</b><small>operations</small></div>
-    <div class="stat"><span>Success rate</span><b class="{{ 'good' if rate >= 95 else 'warn' }}">{{ rate }}%</b><small>{{ (totals.total - totals.ok)|int }} failed</small></div>
-    <div class="stat"><span>Avg duration</span><b>{{ totals.avg_ms|round|int }}<em> ms</em></b><small>per operation</small></div>
-    <div class="stat"><span>Data processed</span><b>{{ totals.in_bytes|int|size }}</b><small>input size</small></div>
-    <div class="stat"><span>Editor sessions</span><b>{{ sessions_n }}</b><small>open now</small></div>
-    <div class="stat"><span>Editor saves</span><b>{{ saves }}</b><small>exports</small></div>
+    <div class="stat"><div class="si"><svg><use href="#a-ops"/></svg></div><span>Operations</span><b>{{ totals.total }}</b><small>all time</small></div>
+    <div class="stat"><div class="si"><svg><use href="#a-clock"/></svg></div><span>Last 24 hours</span><b>{{ totals.last_24h|int }}</b><small>operations</small></div>
+    <div class="stat"><div class="si {{ 'ok' if rate >= 95 else 'bad' }}"><svg><use href="#a-ok"/></svg></div><span>Success rate</span><b class="{{ 'good' if rate >= 95 else 'warn' }}">{{ rate }}%</b><small>{{ failed_n }} failed</small></div>
+    <div class="stat"><div class="si"><svg><use href="#a-speed"/></svg></div><span>Avg duration</span><b>{{ totals.avg_ms|round|int }}<em> ms</em></b><small>per operation</small></div>
+    <div class="stat"><div class="si"><svg><use href="#a-data"/></svg></div><span>Data processed</span><b>{{ totals.in_bytes|int|size }}</b><small>input size</small></div>
+    <div class="stat"><div class="si"><svg><use href="#a-save"/></svg></div><span>Editor saves</span><b>{{ saves }}</b><small>exports</small></div>
   </section>
 
   <div class="two">
@@ -58,6 +25,7 @@
       <div class="chart" role="img" aria-label="Operations per day for the last 14 days">
         {% for d in days %}
         <div class="col" title="{{ d.label }}: {{ d.n }} operations, {{ d.failed }} failed">
+          <em class="val">{{ d.n if d.n }}</em>
           <div class="bar" style="height: {{ (d.n / mx * 100)|round(1) }}%">{% if d.failed %}<div class="f" style="height: {{ (d.failed / d.n * 100)|round(1) }}%"></div>{% endif %}</div>
           <span>{{ d.label[:2] }}</span>
         </div>
@@ -66,12 +34,12 @@
     </section>
 
     <section class="card-s" aria-label="By tool">
-      <div class="card-h"><h2>By tool</h2><span class="hint">click to filter</span></div>
+      <div class="card-h"><h2>By tool</h2><a class="hint-link" href="/admin/operations">View all</a></div>
       <ul class="tools">
         {% set top = (by_tool|map(attribute='n')|max) or 1 %}
         {% for r in by_tool %}
         <li>
-          <a href="{{ link('ops', tool=r.tool, page=1) }}" class="{{ 'on' if r.tool == tool }}">
+          <a href="/admin/operations?tool={{ r.tool }}">
             <span class="tn">{{ r.tool }}</span>
             <span class="meter"><i style="width: {{ (r.n / top * 100)|round }}%"></i></span>
             <span class="tc">{{ r.n }}{% if r.failed|int %} <em class="bad">{{ r.failed|int }} failed</em>{% endif %}</span>
@@ -82,61 +50,19 @@
     </section>
   </div>
 
-  <section id="ops" class="card-s flush" aria-label="Recent operations">
-    <div class="card-h pad"><h2>Recent operations</h2>
-      <a class="btn ghost sm" href="/admin/export.csv?{{ request.query_string.decode() }}">⬇ Export CSV</a>
-    </div>
-    <form class="filters pad" method="get" action="/admin#ops" role="search">
-      <input class="search" type="search" name="q" value="{{ q }}" placeholder="Search file, IP or error…" aria-label="Search operations">
-      <select name="tool" aria-label="Tool" onchange="this.form.submit()">
-        <option value="">All tools</option>
-        {% for r in by_tool %}<option value="{{ r.tool }}" {{ 'selected' if r.tool == tool }}>{{ r.tool }}</option>{% endfor %}
-      </select>
-      <select name="status" aria-label="Status" onchange="this.form.submit()">
-        <option value="">Any status</option>
-        <option value="ok" {{ 'selected' if status == 'ok' }}>Successful</option>
-        <option value="failed" {{ 'selected' if status == 'failed' }}>Failed</option>
-      </select>
-      <select name="per" aria-label="Rows per page" onchange="this.form.submit()">
-        {% for n in (10, 25, 50, 100) %}<option value="{{ n }}" {{ 'selected' if n == per }}>{{ n }} / page</option>{% endfor %}
-      </select>
-      <button class="btn sm" type="submit">Search</button>
-      {% if tool or status or q %}<a class="reset" href="/admin#ops">Reset</a>{% endif %}
-    </form>
-
+  <section class="card-s flush" aria-label="Latest operations">
+    <div class="card-h pad"><h2>Latest operations</h2><a class="btn ghost sm" href="/admin/latest">See latest operations →</a></div>
     <div class="tbl-wrap"><table class="t">
-      <thead><tr><th>When</th><th>Tool</th><th>File</th><th>In</th><th>Out</th><th>Time</th><th>Status</th><th>IP</th><th>Error</th></tr></thead>
+      <thead><tr><th>When</th><th>Tool</th><th>File</th><th>Time</th><th>Status</th></tr></thead>
       <tbody>
-      {% for o in ops %}<tr>
+      {% for o in recent %}<tr>
         <td data-l="When">{{ o.created_at }}</td>
         <td data-l="Tool"><span class="tag">{{ o.tool }}</span></td>
         <td data-l="File" class="wrap-cell">{{ o.filename }}</td>
-        <td data-l="In">{{ o.input_bytes|size }}</td>
-        <td data-l="Out">{{ o.output_bytes|size if o.output_bytes is not none else '–' }}</td>
         <td data-l="Time">{{ o.duration_ms }} ms</td>
         <td data-l="Status"><span class="pill {{ 'ok' if o.success else 'bad' }}">{{ o.status_code }}</span></td>
-        <td data-l="IP">{{ o.client_ip }}</td>
-        <td data-l="Error" class="wrap-cell err-cell">{{ o.error or '' }}</td>
-      </tr>{% else %}<tr class="none"><td colspan="9">Nothing matches your filters.</td></tr>{% endfor %}
+      </tr>{% else %}<tr class="none"><td colspan="5">No operations yet.</td></tr>{% endfor %}
       </tbody>
     </table></div>
-    <div class="pad">{{ pager(ops_pg, 'page', 'ops') }}</div>
   </section>
-
-  <section id="sessions" class="card-s flush" aria-label="Editor sessions">
-    <div class="card-h pad"><h2>Editor sessions</h2><span class="hint">{{ s_pg.total }} open</span></div>
-    <div class="tbl-wrap"><table class="t">
-      <thead><tr><th>Session</th><th>File</th><th>Pages</th><th>Size</th><th>Last active</th><th></th></tr></thead>
-      <tbody>
-      {% for s in sessions %}<tr>
-        <td data-l="Session"><code>{{ s.sid[:8] }}…</code></td><td data-l="File" class="wrap-cell">{{ s.filename }}</td><td data-l="Pages">{{ s.page_count }}</td>
-        <td data-l="Size">{{ s.size_bytes|size }}</td><td data-l="Last active">{{ s.updated_at }}</td>
-        <td class="act"><form method="post" action="/admin/sessions/{{ s.sid }}/delete" onsubmit="return confirm('Delete this session and its file?')"><button class="danger" type="submit">Delete</button></form></td>
-      </tr>{% else %}<tr class="none"><td colspan="6">No open sessions.</td></tr>{% endfor %}
-      </tbody>
-    </table></div>
-    <div class="pad">{{ pager(s_pg, 'sp', 'sessions') }}</div>
-  </section>
-</main>
-</body>
-</html>
+{% endblock %}

@@ -6,7 +6,7 @@ from reportlab.pdfgen import canvas
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.exceptions import HTTPException
-from flask import Flask, request, send_file, send_from_directory, abort, render_template, session, redirect, url_for, Response
+from flask import Flask, request, send_file, send_from_directory, abort, render_template, session, redirect, url_for, Response, flash
 from urllib.parse import urlencode
 import db
 import secrets, functools
@@ -523,6 +523,36 @@ def _put_text(page, op, x, baseline, text, dm):
         page.insert_text(pt, line, fontname=_font_for(op, line, page), fontsize=size,
                          color=color, rotate=page.rotation)
 
+def _put_textbox(page, o, dm):
+    """Text added by the user: font style, underline, alignment, opacity and optional background fill."""
+    size = float(o.get('size', 12))
+    lines = o['text'].split('\n')
+    lh = size * 1.2
+    widths = [_run_width(page, o, l) if l else 0 for l in lines]
+    bw = max(widths) if widths else 0
+    try:
+        opacity = min(max(float(o.get('opacity', 1)), 0.05), 1.0)
+    except (TypeError, ValueError):
+        opacity = 1.0
+    color = _hex(o.get('color', '#000000'))
+    x0, y0 = float(o['x']), float(o['y'])
+    if o.get('fill'):
+        pad = 2
+        r = fitz.Rect(x0 - pad, y0 - pad, x0 + bw + pad, y0 + len(lines) * lh + pad) * dm
+        page.draw_rect(r, color=None, fill=_hex(o['fill'], (1, 1, 0)), fill_opacity=opacity, width=0)
+    for i, (line, w) in enumerate(zip(lines, widths)):
+        if not line:
+            continue
+        shift = {'center': (bw - w) / 2, 'right': bw - w}.get(o.get('align'), 0)
+        lx, base = x0 + shift, y0 + size + i * lh
+        page.insert_text(fitz.Point(lx, base) * dm, line, fontname=_font_for(o, line, page), fontsize=size,
+                         color=color, rotate=page.rotation, fill_opacity=opacity)
+        if o.get('underline'):
+            uy = base + size * 0.12
+            page.draw_line(fitz.Point(lx, uy) * dm, fitz.Point(lx + w, uy) * dm, color=color,
+                           width=max(0.6, size / 16), stroke_opacity=opacity)
+
+
 def _run_width(page, op, text):
     fn = _font_for(op, text, page)
     size = float(op.get('size', 12))
@@ -635,7 +665,7 @@ def apply_edits(path, edits, keep, images=None):
                 page.draw_polyline(pts, color=_hex(o.get('color', '#e11d48')),
                                    width=float(o.get('width', 2)), lineCap=1, lineJoin=1, closePath=False)
             elif t == 'text' and o.get('text', '').strip():
-                _put_text(page, o, o['x'], o['y'] + float(o.get('size', 12)), o['text'], dm)
+                _put_textbox(page, o, dm)
             elif t == 'image' and images and str(o.get('img')) in images:
                 r = fitz.Rect(o['x'], o['y'], o['x'] + o['w'], o['y'] + o['h']) * dm
                 if r.is_empty:
@@ -768,18 +798,8 @@ def _op_filters():
 @admin_required
 def admin_dashboard():
     from datetime import date, timedelta
-    totals, by_tool, sessions_n, saves = db.admin_stats()
-    tool, status, q = _op_filters()
-    per = _int('per', 10, 5, 100)
-    if per not in (10, 25, 50, 100):
-        per = 10
-    # clamp page against the real total
-    _, total = db.recent_operations(1, 1, tool, status, q)
-    ops_pg = _pager(_int('page', 1), per, total, None)
-    ops, _ = db.recent_operations(ops_pg['page'], per, tool, status, q)
-    _, s_total = db.list_sessions(1, 1)
-    s_pg = _pager(_int('sp', 1), 10, s_total, None)
-    sess, _ = db.list_sessions(s_pg['page'], 10)
+    totals, by_tool, _sessions_n, saves = db.admin_stats()
+    recent, _ = db.recent_operations(1, 6)
     # fill missing days for the activity chart
     got = {str(r['d']): r for r in db.ops_per_day(14)}
     days = []
@@ -787,14 +807,32 @@ def admin_dashboard():
         d = date.today() - timedelta(days=i)
         r = got.get(str(d))
         days.append(dict(label=d.strftime('%d %b'), n=int(r['n']) if r else 0, failed=int(r['failed'] or 0) if r else 0))
+    return render_template('admin.html', totals=totals, by_tool=by_tool, saves=saves, recent=recent, days=days)
 
-    def link(anchor='ops', **kw):
+@app.get('/admin/latest')
+@admin_required
+def admin_latest():
+    rows, total = db.recent_operations(1, 25)
+    return render_template('admin_latest.html', ops=rows, total=total)
+
+@app.get('/admin/operations')
+@admin_required
+def admin_operations():
+    _, by_tool, _s, _v = db.admin_stats()
+    tool, status, q = _op_filters()
+    per = _int('per', 10, 5, 100)
+    if per not in (10, 25, 50, 100):
+        per = 10
+    _, total = db.recent_operations(1, 1, tool, status, q)  # clamp page against the real total
+    ops_pg = _pager(_int('page', 1), per, total, None)
+    ops, _ = db.recent_operations(ops_pg['page'], per, tool, status, q)
+
+    def link(**kw):
         args = {k: v for k, v in request.args.items() if k != 'failed'}
         args.update(kw)
-        return '/admin?' + urlencode({k: v for k, v in args.items() if v not in (None, '')}) + '#' + anchor
+        return '/admin/operations?' + urlencode({k: v for k, v in args.items() if v not in (None, '')})
 
-    return render_template('admin.html', totals=totals, by_tool=by_tool, sessions_n=sessions_n, saves=saves,
-                           ops=ops, ops_pg=ops_pg, sessions=sess, s_pg=s_pg, days=days,
+    return render_template('admin_operations.html', by_tool=by_tool, ops=ops, ops_pg=ops_pg,
                            tool=tool, status=status, q=q or '', per=per, link=link)
 
 @app.get('/admin/export.csv')
@@ -811,16 +849,60 @@ def admin_export():
     return Response(buf.getvalue(), mimetype='text/csv',
                     headers={'Content-Disposition': 'attachment; filename=operations.csv'})
 
-@app.post('/admin/sessions/<sid>/delete')
+@app.context_processor
+def _inject_csrf():
+    if 'csrf' not in session:
+        session['csrf'] = secrets.token_hex(16)
+    return {'csrf_token': session['csrf']}
+
+def _check_csrf():
+    sent = request.form.get('csrf', '')
+    if not sent or not secrets.compare_digest(sent, session.get('csrf', '')):
+        abort(400, 'Invalid or expired form. Reload the page and try again.')
+
+def _password_problem(current, new, confirm, admin):
+    if not check_password_hash(admin['password_hash'], current):
+        return 'current', 'Your current password is incorrect.'
+    if len(new) < 8:
+        return 'new', 'New password must be at least 8 characters.'
+    if len(new) > 128:
+        return 'new', 'New password is too long (max 128 characters).'
+    if new == current:
+        return 'new', 'New password must be different from the current one.'
+    if new != confirm:
+        return 'confirm', 'The two new passwords do not match.'
+    return None, None
+
+@app.route('/admin/password', methods=['GET', 'POST'])
 @admin_required
-def admin_delete_session(sid):
-    if re.fullmatch(r'[0-9a-f]{32}', sid):
-        db.delete_session(sid)
-        try:
-            os.remove(os.path.join(EDIT_DIR, sid + '.pdf'))
-        except OSError:
-            pass
-    return redirect(url_for('admin_dashboard'))
+def admin_password():
+    err = field = None
+    if request.method == 'POST':
+        _check_csrf()
+        key = 'pw:%s' % session.get('admin_id')
+        n, t0 = _fails.get(key, (0, time.time()))
+        if time.time() - t0 > 900:
+            n, t0 = 0, time.time()
+        admin = db.get_admin(session.get('admin', ''))
+        if n >= 5:
+            err = 'Too many attempts. Try again in a few minutes.'
+        elif not admin:
+            session.clear()
+            return redirect(url_for('admin_login'))
+        else:
+            field, err = _password_problem(request.form.get('current', ''), request.form.get('new', ''),
+                                           request.form.get('confirm', ''), admin)
+            if err is None:
+                _fails.pop(key, None)
+                db.update_admin_password(admin['id'], generate_password_hash(request.form['new']))
+                session.clear()  # rotate the session after a credential change
+                session.permanent = True
+                session.update(admin_id=admin['id'], admin=admin['username'], role=admin['role'], csrf=secrets.token_hex(16))
+                flash('Your password was changed successfully.')
+                return redirect(url_for('admin_password'))
+            if field == 'current':
+                _fails[key] = (n + 1, t0)
+    return render_template('admin_password.html', error=err, field=field), (429 if err and 'Too many' in err else 200)
 
 @app.get('/admin.css')
 def admin_css():

@@ -1,0 +1,64 @@
+{% extends "admin_base.html" %}
+{% set active = 'ops' %}
+{% block title %}Operations{% endblock %}
+{% block content %}
+{% macro pager(pg, key) %}
+{% if pg.total %}
+<nav class="pager" aria-label="Pagination">
+  <span class="pager-info">Showing <b>{{ pg.first }}–{{ pg.last }}</b> of <b>{{ pg.total }}</b></span>
+  <ul>
+    <li>{% if pg.page > 1 %}<a href="{{ link(**{key: pg.page - 1}) }}" aria-label="Previous page">‹ Prev</a>{% else %}<span class="dis">‹ Prev</span>{% endif %}</li>
+    {% for n in pg['items'] %}
+      {% if n is none %}<li><span class="gap">…</span></li>
+      {% elif n == pg.page %}<li><span class="cur" aria-current="page">{{ n }}</span></li>
+      {% else %}<li><a href="{{ link(**{key: n}) }}">{{ n }}</a></li>{% endif %}
+    {% endfor %}
+    <li>{% if pg.page < pg.pages %}<a href="{{ link(**{key: pg.page + 1}) }}" aria-label="Next page">Next ›</a>{% else %}<span class="dis">Next ›</span>{% endif %}</li>
+  </ul>
+</nav>
+{% endif %}
+{% endmacro %}
+
+  <div class="page-title">
+    <div><h1>Operations</h1><p>Every conversion and editor action, with search and filters.</p></div>
+    <div class="pt-actions"><a class="btn ghost sm" href="/admin/export.csv?{{ request.query_string.decode() }}">⬇ Export CSV</a></div>
+  </div>
+
+  <section class="card-s flush" aria-label="Operations">
+    <form class="filters pad top" method="get" action="/admin/operations" role="search">
+      <input class="search" type="search" name="q" value="{{ q }}" placeholder="Search file, IP or error…" aria-label="Search operations">
+      <select name="tool" aria-label="Tool" onchange="this.form.submit()">
+        <option value="">All tools</option>
+        {% for r in by_tool %}<option value="{{ r.tool }}" {{ 'selected' if r.tool == tool }}>{{ r.tool }}</option>{% endfor %}
+      </select>
+      <select name="status" aria-label="Status" onchange="this.form.submit()">
+        <option value="">Any status</option>
+        <option value="ok" {{ 'selected' if status == 'ok' }}>Successful</option>
+        <option value="failed" {{ 'selected' if status == 'failed' }}>Failed</option>
+      </select>
+      <select name="per" aria-label="Rows per page" onchange="this.form.submit()">
+        {% for n in (10, 25, 50, 100) %}<option value="{{ n }}" {{ 'selected' if n == per }}>{{ n }} / page</option>{% endfor %}
+      </select>
+      <button class="btn sm" type="submit">Search</button>
+      {% if tool or status or q %}<a class="reset" href="/admin/operations">Reset</a>{% endif %}
+    </form>
+
+    <div class="tbl-wrap"><table class="t">
+      <thead><tr><th>When</th><th>Tool</th><th>File</th><th>In</th><th>Out</th><th>Time</th><th>Status</th><th>IP</th><th>Error</th></tr></thead>
+      <tbody>
+      {% for o in ops %}<tr>
+        <td data-l="When">{{ o.created_at }}</td>
+        <td data-l="Tool"><span class="tag">{{ o.tool }}</span></td>
+        <td data-l="File" class="wrap-cell">{{ o.filename }}</td>
+        <td data-l="In">{{ o.input_bytes|size }}</td>
+        <td data-l="Out">{{ o.output_bytes|size if o.output_bytes is not none else '–' }}</td>
+        <td data-l="Time">{{ o.duration_ms }} ms</td>
+        <td data-l="Status"><span class="pill {{ 'ok' if o.success else 'bad' }}">{{ o.status_code }}</span></td>
+        <td data-l="IP">{{ o.client_ip }}</td>
+        <td data-l="Error" class="wrap-cell err-cell">{{ o.error or '' }}</td>
+      </tr>{% else %}<tr class="none"><td colspan="9">Nothing matches your filters.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+    <div class="pad">{{ pager(ops_pg, 'page') }}</div>
+  </section>
+{% endblock %}
