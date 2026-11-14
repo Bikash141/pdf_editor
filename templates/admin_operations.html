@@ -21,11 +21,11 @@
 
   <div class="page-title">
     <div><h1>Operations</h1><p>Every conversion and editor action, with search and filters.</p></div>
-    <div class="pt-actions"><a class="btn ghost sm" href="/admin/export.csv?{{ request.query_string.decode() }}">⬇ Export CSV</a></div>
+    <div class="pt-actions"><a class="btn ghost sm" href="/superadmin/export.csv?{{ request.query_string.decode() }}">⬇ Export CSV</a></div>
   </div>
 
   <section class="card-s flush" aria-label="Operations">
-    <form class="filters pad top" method="get" action="/admin/operations" role="search">
+    <form class="filters pad top" method="get" action="/superadmin/operations" role="search">
       <input class="search" type="search" name="q" value="{{ q }}" placeholder="Search file, IP or error…" aria-label="Search operations">
       <select name="tool" aria-label="Tool" onchange="this.form.submit()">
         <option value="">All tools</option>
@@ -40,7 +40,7 @@
         {% for n in (10, 25, 50, 100) %}<option value="{{ n }}" {{ 'selected' if n == per }}>{{ n }} / page</option>{% endfor %}
       </select>
       <button class="btn sm" type="submit">Search</button>
-      {% if tool or status or q %}<a class="reset" href="/admin/operations">Reset</a>{% endif %}
+      {% if tool or status or q %}<a class="reset" href="/superadmin/operations">Reset</a>{% endif %}
     </form>
 
     <div class="tbl-wrap"><table class="t">

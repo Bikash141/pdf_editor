@@ -1,0 +1,21 @@
+{% extends "page.html" %}
+{% block title %}Privacy{% endblock %}
+{% block desc %}How BP PDF Editor handles your files and data.{% endblock %}
+{% block eyebrow %}Privacy{% endblock %}
+{% block h1 %}Your documents stay yours{% endblock %}
+{% block lead %}A plain-language summary of what happens to your files and what we record.{% endblock %}
+{% block body %}
+<h2>Your files</h2>
+<p>PDFs you open are processed by the server this site runs on, not by a third-party service. We do not send your documents to any external converter, AI service or cloud storage.</p>
+<p>While you edit, a working copy is kept in a temporary folder so pages can be rendered. Idle copies are deleted automatically a few hours after your last activity, and closing the editor ends your session.</p>
+<h2>What we record</h2>
+<p>To keep the service healthy we log basic usage information for each operation: the tool used, the file name, file size, how long it took, whether it succeeded, and the IP address of the request. We do not store the contents of your documents, and passwords you enter for protecting or unlocking a PDF are never logged.</p>
+<h2>Cookies</h2>
+<p>The public site uses no tracking cookies. Your light or dark theme choice is stored in your browser only. The administrator area uses a secure session cookie to keep administrators signed in.</p>
+<h2>Your choices</h2>
+<ul>
+  <li>Close the editor when you are done to end the session.</li>
+  <li>Use browser private mode if you do not want a theme preference remembered.</li>
+  <li>Ask the site operator to remove any log entries that mention your file name.</li>
+</ul>
+{% endblock %}

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Page{% endblock %} – BP PDF Editor</title>
+<meta name="description" content="{% block desc %}BP PDF Editor: edit, annotate and export PDF files privately.{% endblock %}">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23ffcc00'/%3E%3Ctext x='16' y='22' font-family='Arial,sans-serif' font-size='16' font-weight='800' text-anchor='middle' fill='%23111'%3EBP%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="page-body">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z"/></symbol>
+</svg>
+{% include "partials/header.html" %}
+<main id="top">
+  <section class="page-hero wrap">
+    <span class="eyebrow">{% block eyebrow %}{% endblock %}</span>
+    <h1>{% block h1 %}{% endblock %}</h1>
+    <p>{% block lead %}{% endblock %}</p>
+  </section>
+  <article class="prose wrap">
+    {% block body %}{% endblock %}
+  </article>
+</main>
+{% include "partials/footer.html" %}
+<script>
+(function () {
+  var root = document.documentElement;
+  try { if (localStorage.theme) root.dataset.theme = localStorage.theme; } catch (e) {}
+  var y = document.getElementById('year'); if (y) y.textContent = new Date().getFullYear();
+  var b = document.getElementById('theme');
+  if (b) b.onclick = function () {
+    var dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.theme = root.dataset.theme; } catch (e) {}
+  };
+})();
+</script>
+</body>
+</html>

@@ -6,7 +6,7 @@
     <div><h1>Latest operations</h1><p>The 25 most recent conversions and editor actions, newest first.</p></div>
     <div class="pt-actions">
       <label class="live" id="liveLbl"><input type="checkbox" id="live"><i class="dot"></i>Auto-refresh (10s)</label>
-      <a class="btn ghost sm" href="/admin/latest">↻ Refresh</a>
+      <a class="btn ghost sm" href="/superadmin/latest">↻ Refresh</a>
     </div>
   </div>
 
@@ -25,7 +25,7 @@
       </li>
       {% endfor %}
     </ul>
-    <div class="feed-foot"><span>Showing the latest {{ ops|length }} of {{ total }}</span><a class="btn ghost sm" href="/admin/operations">Search all operations →</a></div>
+    <div class="feed-foot"><span>Showing the latest {{ ops|length }} of {{ total }}</span><a class="btn ghost sm" href="/superadmin/operations">Search all operations →</a></div>
     {% else %}
     <div class="feed-empty">No operations yet.</div>
     {% endif %}

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Admin{% endblock %} – BP PDF Editor</title>
+<title>{% block title %}Superadmin{% endblock %} – BP PDF Editor</title>
 <meta name="robots" content="noindex">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1220'/%3E%3Ctext x='16' y='22' font-family='Arial,sans-serif' font-size='16' font-weight='800' text-anchor='middle' fill='%23ffc800'%3EBP%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/style.css">
@@ -30,19 +30,19 @@
 
 <div class="shell">
   <aside class="side">
-    <a class="logo" href="/admin"><span class="mark">BP</span><span class="word">Admin</span></a>
-    <nav class="side-nav" aria-label="Admin">
+    <a class="logo" href="/superadmin"><span class="mark">BP</span><span class="word">Superadmin</span></a>
+    <nav class="side-nav" aria-label="Superadmin">
       <span class="side-label">Overview</span>
-      <a href="/admin" class="{{ 'on' if active == 'dash' }}"><svg><use href="#a-grid"/></svg>Dashboard</a>
-      <a href="/admin/latest" class="{{ 'on' if active == 'latest' }}"><svg><use href="#a-clock"/></svg>Latest operations</a>
-      <a href="/admin/operations" class="{{ 'on' if active == 'ops' }}"><svg><use href="#a-list"/></svg>Operations</a>
+      <a href="/superadmin" class="{{ 'on' if active == 'dash' }}"><svg><use href="#a-grid"/></svg>Dashboard</a>
+      <a href="/superadmin/latest" class="{{ 'on' if active == 'latest' }}"><svg><use href="#a-clock"/></svg>Latest operations</a>
+      <a href="/superadmin/operations" class="{{ 'on' if active == 'ops' }}"><svg><use href="#a-list"/></svg>Operations</a>
       <span class="side-label">Account</span>
-      <a href="/admin/password" class="{{ 'on' if active == 'password' }}"><svg><use href="#a-key"/></svg>Change password</a>
+      <a href="/superadmin/password" class="{{ 'on' if active == 'password' }}"><svg><use href="#a-key"/></svg>Change password</a>
       <a href="/" target="_blank" rel="noopener"><svg><use href="#a-site"/></svg>View website</a>
     </nav>
     <div class="side-foot">
       <div class="who"><i>{{ session.admin[:1]|upper }}</i><span><b>{{ session.admin }}</b><small>Superadmin</small></span></div>
-      <form method="post" action="/admin/logout"><button class="out" type="submit"><svg><use href="#a-out"/></svg>Sign out</button></form>
+      <form method="post" action="/superadmin/logout"><button class="out" type="submit"><svg><use href="#a-out"/></svg>Sign out</button></form>
     </div>
   </aside>
 

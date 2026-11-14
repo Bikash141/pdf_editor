@@ -4,7 +4,7 @@
 {% block content %}
   <div class="page-title">
     <div><h1>Dashboard</h1><p>Welcome back, {{ session.admin }}. Usage across all tools, updated on every page load.</p></div>
-    <div class="pt-actions"><a class="btn ghost sm" href="/admin">↻ Refresh</a><a class="btn sm" href="/admin/password">Change password</a></div>
+    <div class="pt-actions"><a class="btn ghost sm" href="/superadmin">↻ Refresh</a><a class="btn sm" href="/superadmin/password">Change password</a></div>
   </div>
 
   {% set rate = ((totals.ok / totals.total * 100) if totals.total else 100)|round(1) %}
@@ -34,12 +34,12 @@
     </section>
 
     <section class="card-s" aria-label="By tool">
-      <div class="card-h"><h2>By tool</h2><a class="hint-link" href="/admin/operations">View all</a></div>
+      <div class="card-h"><h2>By tool</h2><a class="hint-link" href="/superadmin/operations">View all</a></div>
       <ul class="tools">
         {% set top = (by_tool|map(attribute='n')|max) or 1 %}
         {% for r in by_tool %}
         <li>
-          <a href="/admin/operations?tool={{ r.tool }}">
+          <a href="/superadmin/operations?tool={{ r.tool }}">
             <span class="tn">{{ r.tool }}</span>
             <span class="meter"><i style="width: {{ (r.n / top * 100)|round }}%"></i></span>
             <span class="tc">{{ r.n }}{% if r.failed|int %} <em class="bad">{{ r.failed|int }} failed</em>{% endif %}</span>
@@ -51,7 +51,7 @@
   </div>
 
   <section class="card-s flush" aria-label="Latest operations">
-    <div class="card-h pad"><h2>Latest operations</h2><a class="btn ghost sm" href="/admin/latest">See latest operations →</a></div>
+    <div class="card-h pad"><h2>Latest operations</h2><a class="btn ghost sm" href="/superadmin/latest">See latest operations →</a></div>
     <div class="tbl-wrap"><table class="t">
       <thead><tr><th>When</th><th>Tool</th><th>File</th><th>Time</th><th>Status</th></tr></thead>
       <tbody>

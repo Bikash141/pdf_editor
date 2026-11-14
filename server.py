@@ -76,6 +76,18 @@ def log_operation(resp):
 def index():
     return render_template('index.html')
 
+@app.get('/privacy')
+def privacy_page():
+    return render_template('privacy.html')
+
+@app.get('/terms')
+def terms_page():
+    return render_template('terms.html')
+
+@app.get('/about')
+def about_page():
+    return render_template('about.html')
+
 @app.get('/style.css')
 def style_css():
     return send_from_directory(HERE, 'style.css')
@@ -624,7 +636,46 @@ def _remove_images(doc, page, xrefs):
         for x in cont[1:]:
             doc.update_stream(x, b'')
 
-def apply_edits(path, edits, keep, images=None):
+def _vec_png(w, h, draw):
+    """Render a small vector shape to a transparent PNG (Word export keeps images but drops vector shapes)."""
+    w, h = max(float(w), 1.0), max(float(h), 1.0)
+    scale = min(4.0, 3000.0 / max(w, h))
+    tmp = fitz.open()
+    try:
+        pg = tmp.new_page(width=w, height=h)
+        draw(pg, fitz.Rect(0, 0, w, h))
+        return pg.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=True).tobytes('png')
+    finally:
+        tmp.close()
+
+
+def _shape_png(o, r):
+    shape = o.get('shape', 'rect')
+    kw = dict(color=None, fill=_hex(o.get('color', '#ffe600')), fill_opacity=float(o.get('opacity', 1)), width=0)
+
+    def draw(pg, box):
+        if shape == 'ellipse':
+            pg.draw_oval(box, **kw)
+        elif shape == 'round':
+            pg.draw_rect(box, radius=min(.5, 12 / max(min(box.width, box.height), 1)), **kw)
+        else:
+            pg.draw_rect(box, **kw)
+    return _vec_png(r.width, r.height, draw)
+
+
+def _stroke_png(o):
+    pts = [fitz.Point(x, y) for x, y in o['pts']]
+    wd = float(o.get('width', 2))
+    box = fitz.Rect(min(p.x for p in pts), min(p.y for p in pts), max(p.x for p in pts), max(p.y for p in pts))
+    box = fitz.Rect(box.x0 - wd, box.y0 - wd, box.x1 + wd, box.y1 + wd)
+
+    def draw(pg, _b):
+        pg.draw_polyline([fitz.Point(p.x - box.x0, p.y - box.y0) for p in pts], color=_hex(o.get('color', '#e11d48')),
+                         width=wd, lineCap=1, lineJoin=1, closePath=False)
+    return box, _vec_png(box.width, box.height, draw)
+
+
+def apply_edits(path, edits, keep, images=None, for_docx=False):
     doc = fitz.open(path)
     byp = {}
     for o in edits:
@@ -635,6 +686,16 @@ def apply_edits(path, edits, keep, images=None):
         page = doc[pn]
         dm = page.derotation_matrix
         _remove_images(doc, page, [int(o['xref']) for o in ops if o['t'] == 'delimg'])
+        # Cover (solid, rectangular): really remove the text/image pixels underneath, otherwise the
+        # covered content stays in the PDF and reappears when exported to Word or copied.
+        covers = [o for o in ops if o['t'] == 'rect' and o.get('shape', 'rect') == 'rect'
+                  and float(o.get('opacity', 1)) >= 0.99]
+        for o in covers:
+            r = fitz.Rect(o['x'], o['y'], o['x'] + o['w'], o['y'] + o['h']) * dm
+            if not r.is_empty:
+                page.add_redact_annot(r, fill=False)
+        if covers:
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS, graphics=0)
         reps = [o for o in ops if o['t'] == 'replace']
         for o in reps:
             r = fitz.Rect(o['bbox']) * dm
@@ -654,12 +715,20 @@ def apply_edits(path, edits, keep, images=None):
                 r = fitz.Rect(o['x'], o['y'], o['x'] + o['w'], o['y'] + o['h']) * dm
                 shape, kw = o.get('shape', 'rect'), dict(color=None, fill=_hex(o.get('color', '#ffe600')),
                                                          fill_opacity=float(o.get('opacity', 1)), width=0)
+                if for_docx:  # Word export drops vector shapes, so place the box as an image instead
+                    if not r.is_empty:
+                        page.insert_image(r, stream=_shape_png(o, fitz.Rect(o['x'], o['y'], o['x'] + o['w'], o['y'] + o['h'])),
+                                          keep_proportion=False, rotate=page.rotation, overlay=True)
+                    continue
                 if shape == 'ellipse':
                     page.draw_oval(r, **kw)
                 elif shape == 'round':
                     page.draw_rect(r, radius=min(.5, 12 / max(min(r.width, r.height), 1)), **kw)
                 else:
                     page.draw_rect(r, **kw)
+            elif t == 'draw' and len(o.get('pts', [])) >= 2 and for_docx:
+                box, png = _stroke_png(o)
+                page.insert_image(box * dm, stream=png, keep_proportion=False, rotate=page.rotation, overlay=True)
             elif t == 'draw' and len(o.get('pts', [])) >= 2:
                 pts = [fitz.Point(x, y) * dm for x, y in o['pts']]
                 page.draw_polyline(pts, color=_hex(o.get('color', '#e11d48')),
@@ -674,10 +743,8 @@ def apply_edits(path, edits, keep, images=None):
                                   rotate=page.rotation, overlay=True)
     if keep is not None:
         doc.select([i for i in keep if 0 <= i < len(doc)])
-    try:
-        doc.subset_fonts()  # shrink embedded fonts (needs fontTools; optional)
-    except Exception:
-        pass
+    # Do NOT subset fonts here: re-subsetting the PDF's existing Type0/CID fonts corrupts their
+    # glyph widths, which spaces letters out and makes Cover boxes miss the text in real viewers.
     data = doc.tobytes(garbage=3, deflate=True)
     doc.close()
     return data
@@ -695,7 +762,7 @@ def editor_save(sid):
     db.touch_session(sid)
     try:
         images = {k[4:]: f.read() for k, f in request.files.items() if k.startswith('img_')}
-        data = apply_edits(path, edits, keep, images)
+        data = apply_edits(path, edits, keep, images, for_docx=request.form.get('format') == 'docx')
     except Exception as e:
         abort(500, f'Saving failed: {e}')
     fmt = request.form.get('format') or 'pdf'
@@ -739,7 +806,14 @@ def seed_admin():
     db.upsert_admin(user, generate_password_hash(pw))
     print(f'Created superadmin "{user}"' + (f' with password: {pw}  (change it: python server.py set-admin-password)' if generated else ''))
 
-@app.route('/admin/login', methods=['GET', 'POST'])
+@app.route('/admin', defaults={'rest': ''})
+@app.route('/admin/<path:rest>')
+def legacy_admin_url(rest):
+    """Old /admin links keep working and land on the /superadmin URL."""
+    qs = request.query_string.decode()
+    return redirect('/superadmin' + ('/' + rest if rest else '') + ('?' + qs if qs else ''), code=301 if request.method == 'GET' else 308)
+
+@app.route('/superadmin/login', methods=['GET', 'POST'])
 def admin_login():
     err = None
     if request.method == 'POST':
@@ -762,7 +836,7 @@ def admin_login():
             err = 'Invalid username or password.'
     return render_template('admin_login.html', error=err), (429 if err and 'Too many' in err else 200)
 
-@app.post('/admin/logout')
+@app.post('/superadmin/logout')
 def admin_logout():
     session.clear()
     return redirect(url_for('admin_login'))
@@ -794,7 +868,7 @@ def _op_filters():
     return (request.args.get('tool') or None, status if status in ('ok', 'failed') else None,
             (request.args.get('q') or '').strip()[:100] or None)
 
-@app.get('/admin')
+@app.get('/superadmin')
 @admin_required
 def admin_dashboard():
     from datetime import date, timedelta
@@ -809,13 +883,13 @@ def admin_dashboard():
         days.append(dict(label=d.strftime('%d %b'), n=int(r['n']) if r else 0, failed=int(r['failed'] or 0) if r else 0))
     return render_template('admin.html', totals=totals, by_tool=by_tool, saves=saves, recent=recent, days=days)
 
-@app.get('/admin/latest')
+@app.get('/superadmin/latest')
 @admin_required
 def admin_latest():
     rows, total = db.recent_operations(1, 25)
     return render_template('admin_latest.html', ops=rows, total=total)
 
-@app.get('/admin/operations')
+@app.get('/superadmin/operations')
 @admin_required
 def admin_operations():
     _, by_tool, _s, _v = db.admin_stats()
@@ -830,12 +904,12 @@ def admin_operations():
     def link(**kw):
         args = {k: v for k, v in request.args.items() if k != 'failed'}
         args.update(kw)
-        return '/admin/operations?' + urlencode({k: v for k, v in args.items() if v not in (None, '')})
+        return '/superadmin/operations?' + urlencode({k: v for k, v in args.items() if v not in (None, '')})
 
     return render_template('admin_operations.html', by_tool=by_tool, ops=ops, ops_pg=ops_pg,
                            tool=tool, status=status, q=q or '', per=per, link=link)
 
-@app.get('/admin/export.csv')
+@app.get('/superadmin/export.csv')
 @admin_required
 def admin_export():
     import csv, io
@@ -873,7 +947,7 @@ def _password_problem(current, new, confirm, admin):
         return 'confirm', 'The two new passwords do not match.'
     return None, None
 
-@app.route('/admin/password', methods=['GET', 'POST'])
+@app.route('/superadmin/password', methods=['GET', 'POST'])
 @admin_required
 def admin_password():
     err = field = None
