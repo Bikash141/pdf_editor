@@ -419,7 +419,12 @@ const ed = { sid: null, name: '', pages: [], ops: [], undo: [], redo: [], tool: 
 const colors = { select: '#000000', text: '#000000', highlight: '#ffe600', whiteout: '#ffffff', draw: '#e11d48' };
 const sizes = { select: 12, text: 12, highlight: 12, whiteout: 12, draw: 2 };
 const errText = t => { const m = t.match(/<p>([\s\S]*?)<\/p>/); return (m ? m[1].replace(/&#39;/g, "'").replace(/&amp;/g, '&') : t).slice(0, 300); };
-const fam = o => o.mono ? '"Courier New",Courier,monospace' : o.serif ? '"Times New Roman",Times,serif' : 'Arial,Helvetica,sans-serif';
+const fam = o => {
+  const base = o.mono ? '"Courier New",Courier,monospace' : o.serif ? '"Times New Roman",Times,serif' : 'Arial,Helvetica,sans-serif';
+  const f = (o.font || '').replace(/^[A-Z]{6}\+/, '').split(/[-,]/)[0].replace(/([a-z])([A-Z])/g, '$1 $2');
+  if (!f) return base;
+  return /dejavu/i.test(f) ? `"DejaVu Sans",Verdana,${base}` : `"${f}",${base}`;
+};
 const pageEl = i => el('edPages').children[i];
 const stageOf = i => pageEl(i).querySelector('.stage');
 const opById = id => ed.ops.find(o => o.id === id);
@@ -529,7 +534,7 @@ function renderPage(i) {
       ev.preventDefault(); ev.stopPropagation();
       const before = clone(ed.ops);
       const o = { id: ed.nid++, t: 'replace', page: i, line: k, bbox: ln.bbox, origin: ln.origin, spans: ln.spans, orig: ln.text, text: ln.text,
-                  size: ln.size, color: ln.color, bold: ln.bold, italic: ln.italic, serif: ln.serif, mono: ln.mono, bg: ln.bg };
+                  size: ln.size, color: ln.color, font: ln.font, bold: ln.bold, italic: ln.italic, serif: ln.serif, mono: ln.mono, bg: ln.bg };
       ed.ops.push(o);
       const n = drawOp(o, ov, svg); h.remove(); beginRepEdit(n, o, before, i);
     });
@@ -545,7 +550,10 @@ function drawOp(o, ov, svg) {
   if (o.t === 'replace') {
     const n = document.createElement('div'); n.className = 'rep'; n.dataset.id = o.id; n.textContent = o.text;
     const [x0, y0, x1, y1] = o.bbox;
-    n.style.cssText += `left:${x0 * z - 1}px;top:${y0 * z}px;height:${(y1 - y0) * z}px;min-width:${(x1 - x0) * z + 2}px;padding-left:1px;background:rgb(${o.bg.join(',')})`;
+    const pw = ed.pages[o.page].w, ctr = Math.abs((x0 + x1) / 2 - pw / 2) < 4 && (x1 - x0) < pw * .9;
+    n.style.cssText += ctr
+      ? `left:${(x0 + x1) / 2 * z}px;transform:translateX(-50%);top:${y0 * z}px;height:${(y1 - y0) * z}px;min-width:${(x1 - x0) * z + 2}px;justify-content:center;background:rgb(${o.bg.join(',')})`
+      : `left:${x0 * z - 1}px;top:${y0 * z}px;height:${(y1 - y0) * z}px;min-width:${(x1 - x0) * z + 2}px;padding-left:1px;background:rgb(${o.bg.join(',')})`;
     styleText(n, o);
     n.addEventListener('mousedown', ev => {
       if (ev.button !== 0 || n.classList.contains('editing')) return;
@@ -585,15 +593,10 @@ function drawOp(o, ov, svg) {
     });
     ov.appendChild(n); return n;
   }
-  if (o.t === 'delimg') {
+  if (o.t === 'delimg') {   // removed image: just blank the area (Undo brings it back)
     const n = document.createElement('div'); n.className = 'shape ghost'; n.dataset.id = o.id;
     const gp = ed.pages[o.page], gx0 = Math.max(o.bbox[0], 0), gy0 = Math.max(o.bbox[1], 0), gx1 = Math.min(o.bbox[2], gp.w), gy1 = Math.min(o.bbox[3], gp.h);   // clamp to the page
-    n.style.cssText = `left:${gx0 * z}px;top:${gy0 * z}px;width:${Math.max(gx1 - gx0, 0) * z}px;height:${Math.max(gy1 - gy0, 0) * z}px;cursor:pointer`;
-    const l = document.createElement('div'); l.className = 'lbl'; l.textContent = 'Image removed'; n.appendChild(l);
-    const rm = document.createElement('div'); rm.className = 'rm'; rm.textContent = '↶'; rm.title = 'Restore this image'; rm.style.background = '#2563eb';
-    rm.addEventListener('pointerdown', ev => { ev.preventDefault(); ev.stopPropagation(); mutate(() => { ed.ops = ed.ops.filter(x => x !== o); }); ed.sel = null; renderPage(o.page); updateControls(); });
-    n.appendChild(rm);
-    n.addEventListener('pointerdown', ev => { if (ev.target !== rm) { ev.stopPropagation(); select(o.id); } });
+    n.style.cssText = `left:${gx0 * z}px;top:${gy0 * z}px;width:${Math.max(gx1 - gx0, 0) * z}px;height:${Math.max(gy1 - gy0, 0) * z}px`;
     ov.appendChild(n); return n;
   }
   if (o.t === 'image') {

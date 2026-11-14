@@ -453,14 +453,14 @@ def editor_lines(sid, n):
             fname = main['font'].lower()
             def _style(s):
                 f, n = s['flags'], s['font'].lower()
-                return {'t': s['text'], 'size': round(s['size'], 2), 'color': '#%06x' % s['color'],
+                return {'t': s['text'], 'size': round(s['size'], 2), 'color': '#%06x' % s['color'], 'font': s['font'],
                         'bold': bool(f & 16) or 'bold' in n,
                         'italic': bool(f & 2) or 'italic' in n or 'oblique' in n,
                         'serif': bool(f & 1), 'mono': bool(f & 8)}
             out.append({'bbox': [x0, y0, x1, y1], 'origin': list(main['origin']),
                         'spans': [_style(s) for s in ln['spans']],
                         'text': ''.join(s['text'] for s in ln['spans']).rstrip(),
-                        'size': round(main['size'], 2), 'color': '#%06x' % main['color'],
+                        'size': round(main['size'], 2), 'color': '#%06x' % main['color'], 'font': main['font'],
                         'bold': bool(fl & 16) or 'bold' in fname,
                         'italic': bool(fl & 2) or 'italic' in fname or 'oblique' in fname,
                         'serif': bool(fl & 1), 'mono': bool(fl & 8), 'bg': list(bg)})
@@ -508,8 +508,61 @@ WIN_FONTS = os.path.join(os.environ.get('WINDIR', r'C:\Windows'), 'Fonts')
 BASE14 = {'he': ('helv', 'hebo', 'heit', 'hebi'), 'ti': ('tiro', 'tibo', 'tiit', 'tibi'),
           'co': ('cour', 'cobo', 'coit', 'cobi')}
 
+_SYS_FONTS = {   # original font family (lower-case, no spaces) -> Windows font files (regular, bold, italic, bold-italic)
+    'dejavusans': ('verdana.ttf', 'verdanab.ttf', 'verdanai.ttf', 'verdanaz.ttf'),
+    'verdana': ('verdana.ttf', 'verdanab.ttf', 'verdanai.ttf', 'verdanaz.ttf'),
+    'arial': ('arial.ttf', 'arialbd.ttf', 'ariali.ttf', 'arialbi.ttf'),
+    'calibri': ('calibri.ttf', 'calibrib.ttf', 'calibrii.ttf', 'calibriz.ttf'),
+    'carlito': ('calibri.ttf', 'calibrib.ttf', 'calibrii.ttf', 'calibriz.ttf'),
+    'timesnewroman': ('times.ttf', 'timesbd.ttf', 'timesi.ttf', 'timesbi.ttf'),
+    'tahoma': ('tahoma.ttf', 'tahomabd.ttf', 'tahoma.ttf', 'tahomabd.ttf'),
+    'segoeui': ('segoeui.ttf', 'segoeuib.ttf', 'segoeuii.ttf', 'segoeuiz.ttf'),
+    'georgia': ('georgia.ttf', 'georgiab.ttf', 'georgiai.ttf', 'georgiaz.ttf'),
+    'couriernew': ('cour.ttf', 'courbd.ttf', 'couri.ttf', 'courbi.ttf'),
+    'trebuchetms': ('trebuc.ttf', 'trebucbd.ttf', 'trebucit.ttf', 'trebucbi.ttf'),
+}
+
+def _font_family(name):
+    n = re.sub(r'^[A-Z]{6}\+', '', name or '')
+    n = re.split(r'[-,]', n)[0]
+    return re.sub(r'[^a-z]', '', n.lower())
+
+def _orig_font(op, text, page):
+    """Keep the line's own typeface: reuse the embedded font when it has every glyph needed, else a matching system font."""
+    name = op.get('font')
+    if not name or not text:
+        return None
+    bold, italic = bool(op.get('bold')), bool(op.get('italic'))
+    base = re.sub(r'^[A-Z]{6}\+', '', name)
+    try:
+        for f in page.get_fonts(full=True):
+            if f[2] in ('TrueType', 'OpenType', 'Type1', 'CFF') and f[1] != 'n/a' and re.sub(r'^[A-Z]{6}\+', '', f[3]) == base:
+                buf = page.parent.extract_font(f[0])[3]
+                if buf and all(fitz.Font(fontbuffer=buf).has_glyph(ord(c)) for c in text if c != ' ' and c != ' '):
+                    fname = 'o%d' % f[0]
+                    page.insert_font(fontname=fname, fontbuffer=buf)
+                    return fname
+                break
+    except Exception:
+        pass
+    files = _SYS_FONTS.get(_font_family(name))
+    if files:
+        p = os.path.join(WIN_FONTS, files[int(bold) + 2 * int(italic)])
+        if os.path.exists(p):
+            try:
+                fnm = 's' + re.sub(r'\W', '', files[int(bold) + 2 * int(italic)])
+                page.insert_font(fontname=fnm, fontfile=p)
+                if all(fitz.Font(fontfile=p).has_glyph(ord(c)) for c in text if c != ' '):
+                    return fnm
+            except Exception:
+                pass
+    return None
+
 def _font_for(op, text, page):
     bold, italic = bool(op.get('bold')), bool(op.get('italic'))
+    got = _orig_font(op, text, page)
+    if got:
+        return got
     try:
         text.encode('latin-1')
         fam = 'co' if op.get('mono') else 'ti' if op.get('serif') else 'he'
@@ -573,17 +626,28 @@ def _run_width(page, op, text):
     except Exception:
         return fitz.Font('helv').text_length(text, fontsize=size)
 
+def _anchor_x(page, o, x, new_w):
+    """A line that was centred on the page stays centred after its text changes."""
+    try:
+        x0, _, x1, _ = o['bbox']
+        cx = (x0 + x1) / 2
+        if abs(cx - page.rect.width / 2) < 4 and (x1 - x0) < page.rect.width * 0.9:
+            return cx - new_w / 2
+    except Exception:
+        pass
+    return x
+
 def _put_spans(page, o, dm):
     """Re-draw an edited line keeping each original span's own font style (e.g. bold label + regular value)."""
     spans = o.get('spans') or []
     orig, new = o.get('orig', ''), o['text']
     if not spans or not ''.join(s['t'] for s in spans).startswith(orig[:1] or ''):
-        return _put_text(page, o, o['origin'][0], o['origin'][1], new, dm)
+        return _put_text(page, o, _anchor_x(page, o, o['origin'][0], _run_width(page, o, new)), o['origin'][1], new, dm)
     owner = []   # original char index -> span
     for s in spans:
         owner += [s] * len(s['t'])
     if not owner:
-        return _put_text(page, o, o['origin'][0], o['origin'][1], new, dm)
+        return _put_text(page, o, _anchor_x(page, o, o['origin'][0], _run_width(page, o, new)), o['origin'][1], new, dm)
     p = 0
     while p < min(len(orig), len(new)) and orig[p] == new[p]:
         p += 1
@@ -604,6 +668,7 @@ def _put_spans(page, o, dm):
         else:
             runs.append([st, ch])
     x, y = o['origin']
+    x = _anchor_x(page, o, x, sum(_run_width(page, dict(st), txt) for st, txt in runs))
     for st, txt in runs:
         op = dict(st)
         pt = fitz.Point(x, y) * dm
