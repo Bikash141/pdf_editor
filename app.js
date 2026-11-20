@@ -320,14 +320,21 @@ function draw() {
   $('merge').style.display = done > 1 && mode === 'word' ? '' : 'none';
 }
 
+function parseError(t) {
+  if (/Traceback \(most recent call last\)|Copy\/Paste friendly/i.test(t)) {   // raw debugger page: pull out the exception line
+    const x = t.match(/<h1>([\s\S]*?)<\/h1>\s*<p class="errormsg">([\s\S]*?)<\/p>/);
+    return x ? `${x[1]}: ${x[2]}`.replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').slice(0, 300) : 'The server crashed. Check the server console for the error.';
+  }
+  const m = t.match(/<p>([\s\S]*?)<\/p>/);
+  return (m ? m[1].replace(/&#39;/g, "'").replace(/&amp;/g, '&') : t).slice(0, 300);
+}
+
 async function post(url, fd) {
   let res;
   try { res = await fetch(API + url, { method: 'POST', body: fd }); }
   catch { throw new Error('Cannot reach the converter. Is server.py running?'); }
   if (!res.ok) {
-    const t = await res.text();
-    const m = t.match(/<p>([\s\S]*?)<\/p>/);
-    throw new Error((m ? m[1].replace(/&#39;/g, "'").replace(/&amp;/g, '&') : t).slice(0, 300));
+    throw new Error(parseError(await res.text()));
   }
   return res.blob();
 }
@@ -415,10 +422,10 @@ const el = id => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
 const clone = o => JSON.parse(JSON.stringify(o));
 const ed = { sid: null, name: '', pages: [], ops: [], undo: [], redo: [], tool: 'select', zoom: 1.4, sel: null,
-             deleted: new Set(), lines: {}, ver: {}, nid: 1, editNode: null, imgs: {}, imgN: 1, hover: null, images: {}, selImg: null };
-const colors = { select: '#000000', text: '#000000', highlight: '#ffe600', whiteout: '#ffffff', draw: '#e11d48' };
-const sizes = { select: 12, text: 12, highlight: 12, whiteout: 12, draw: 2 };
-const errText = t => { const m = t.match(/<p>([\s\S]*?)<\/p>/); return (m ? m[1].replace(/&#39;/g, "'").replace(/&amp;/g, '&') : t).slice(0, 300); };
+             deleted: new Set(), lines: {}, ver: {}, nid: 1, editNode: null, imgs: {}, imgN: 1, hover: null, images: {}, selImg: null, order: [], find: null };
+const colors = { select: '#000000', text: '#000000', highlight: '#ffe600', whiteout: '#ffffff', draw: '#e11d48', shp: '#e11d48' };
+const sizes = { select: 12, text: 12, highlight: 12, whiteout: 12, draw: 2, shp: 2 };
+const errText = parseError;
 const fam = o => {
   const base = o.mono ? '"Courier New",Courier,monospace' : o.serif ? '"Times New Roman",Times,serif' : 'Arial,Helvetica,sans-serif';
   const f = (o.font || '').replace(/^[A-Z]{6}\+/, '').split(/[-,]/)[0].replace(/([a-z])([A-Z])/g, '$1 $2');
@@ -442,13 +449,61 @@ function syncBtns() { el('edUndo').disabled = !ed.undo.length; el('edRedo').disa
 function stepHistory(from, to) {
   if (document.activeElement && isEditable(document.activeElement)) document.activeElement.blur();
   if (!from.length) return;
-  to.push(clone(ed.ops)); ed.ops = from.pop(); ed.sel = null; renderAll(); syncBtns(); updateControls();
+  to.push(clone(ed.ops)); ed.ops = from.pop(); ed.sel = null; if (ed.find) findCompute(); renderAll(); syncBtns(); updateControls();
 }
 
 // ---- selection / controls
 function applySel() {
   document.querySelectorAll('#edPages [data-id]').forEach(n => n.classList.toggle('sel', Number(n.dataset.id) === ed.sel));
   document.querySelectorAll('#edPages .imgex').forEach(n => n.classList.toggle('sel', !!ed.selImg && ed.selImg.page === Number(n.dataset.pg) && ed.selImg.ix === Number(n.dataset.ix)));
+  updateSelBox();
+}
+// ---- selection box with resize handles (text being edited, or a selected text box): drag a handle to change the font size
+const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+function textNode(o) { return document.querySelector(`#edPages [data-id="${o.id}"]`); }
+function placeSelBox(box, n, ov) {
+  const a = n.getBoundingClientRect(), b = ov.getBoundingClientRect(), pad = 4;
+  box.style.cssText = `left:${a.left - b.left - pad}px;top:${a.top - b.top - pad}px;width:${a.width + pad * 2}px;height:${a.height + pad * 2}px`;
+}
+function updateSelBox() {
+  document.querySelectorAll('#edPages .selbox').forEach(x => x.remove());
+  const o = ed.sel && opById(ed.sel);
+  if (!o || (o.t !== 'text' && o.t !== 'replace')) return;
+  const n = textNode(o), ov = n && n.closest('.ov'); if (!n || !ov) return;
+  const box = document.createElement('div'); box.className = 'selbox';
+  HANDLES.forEach(h => {
+    const d = document.createElement('i'); d.dataset.h = h;
+    d.addEventListener('mousedown', ev => { ev.preventDefault(); ev.stopPropagation(); });   // keep the caret in the text
+    d.addEventListener('pointerdown', ev => startResize(ev, o, n, ov, box, h));
+    box.appendChild(d);
+  });
+  ov.appendChild(box); placeSelBox(box, n, ov);
+}
+function startResize(ev, o, n, ov, box, h) {
+  if (ev.button !== 0) return;
+  ev.preventDefault(); ev.stopPropagation();
+  const tgt = ev.currentTarget; tgt.setPointerCapture(ev.pointerId);
+  const before = clone(ed.ops), r0 = n.getBoundingClientRect(), size0 = o.size, sx = ev.clientX, sy = ev.clientY, isText = o.t === 'text';
+  const move = e => {
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    const fw = (r0.width + (h.includes('e') ? dx : h.includes('w') ? -dx : 0)) / r0.width;
+    const fh = (r0.height + (h.includes('s') ? dy : h.includes('n') ? -dy : 0)) / r0.height;
+    const f = h.length === 2 ? (Math.abs(fw - 1) > Math.abs(fh - 1) ? fw : fh) : (h === 'e' || h === 'w' ? fw : fh);   // corners keep proportions
+    o.size = Math.min(300, Math.max(4, Math.round(size0 * f * 10) / 10));
+    styleText(isText ? n.querySelector('.tx') : n, o); el('edSize').value = o.size;
+    if (isText) {   // the corner opposite the handle stays put
+      const r1 = n.getBoundingClientRect();
+      if (h.includes('w')) o.x += (r0.right - r1.right) / ed.zoom;
+      if (h.includes('n')) o.y += (r0.bottom - r1.bottom) / ed.zoom;
+      n.style.left = o.x * ed.zoom + 'px'; n.style.top = o.y * ed.zoom + 'px';
+    }
+    placeSelBox(box, n, ov);
+  };
+  const up = () => {
+    tgt.removeEventListener('pointermove', move); tgt.removeEventListener('pointerup', up); tgt.removeEventListener('pointercancel', up);
+    commit(before);
+  };
+  tgt.addEventListener('pointermove', move); tgt.addEventListener('pointerup', up); tgt.addEventListener('pointercancel', up);
 }
 function select(id) { ed.sel = id; ed.selImg = null; applySel(); updateControls(); }
 // remove an image that is already part of the PDF: recorded as an edit so it can be undone
@@ -471,9 +526,11 @@ function syncTextOpts() {
 function updateControls() {
   syncTextOpts();
   const o = ed.sel && opById(ed.sel);
+  el('edShpOpts').hidden = !((o && o.t === 'shp') || (!o && ed.tool === 'shp'));
+  if (o && o.t === 'shp') el('edShpKind').value = o.kind;
   if (o) {
-    el('edColor').value = o.t === 'rect' || o.t === 'draw' || o.t === 'text' || o.t === 'replace' ? (o.color || '#000000') : '#000000';
-    el('edSize').value = o.t === 'draw' ? o.width : o.t === 'rect' || o.t === 'image' || o.t === 'delimg' ? '' : o.size;
+    el('edColor').value = o.t === 'rect' || o.t === 'draw' || o.t === 'shp' || o.t === 'text' || o.t === 'replace' ? (o.color || '#000000') : '#000000';
+    el('edSize').value = o.t === 'draw' || o.t === 'shp' ? o.width : o.t === 'rect' || o.t === 'image' || o.t === 'delimg' ? '' : o.size;
   } else {
     el('edColor').value = colors[ed.tool]; el('edSize').value = sizes[ed.tool];
   }
@@ -504,6 +561,8 @@ function styleText(n, o) {
   }
 }
 
+const newRepOp = (i, k, ln) => ({ id: ed.nid++, t: 'replace', page: i, line: k, bbox: ln.bbox, origin: ln.origin, spans: ln.spans, orig: ln.text, text: ln.text,
+  size: ln.size, size0: ln.size, color: ln.color, font: ln.font, bold: ln.bold, italic: ln.italic, serif: ln.serif, mono: ln.mono, bg: ln.bg });
 const area = b => (b[2] - b[0]) * (b[3] - b[1]);
 function renderPage(i) {
   const ov = stageOf(i).querySelector('.ov'), z = ed.zoom;
@@ -533,15 +592,64 @@ function renderPage(i) {
       if (ev.button !== 0) return;
       ev.preventDefault(); ev.stopPropagation();
       const before = clone(ed.ops);
-      const o = { id: ed.nid++, t: 'replace', page: i, line: k, bbox: ln.bbox, origin: ln.origin, spans: ln.spans, orig: ln.text, text: ln.text,
-                  size: ln.size, color: ln.color, font: ln.font, bold: ln.bold, italic: ln.italic, serif: ln.serif, mono: ln.mono, bg: ln.bg };
+      const o = newRepOp(i, k, ln);
       ed.ops.push(o);
       const n = drawOp(o, ov, svg); h.remove(); beginRepEdit(n, o, before, i);
     });
     ov.appendChild(h);
   });
   ed.ops.filter(o => o.page === i).forEach(o => drawOp(o, ov, svg));
+  if (ed.find) ed.find.matches.forEach((m, mi) => {
+    if (m.page !== i) return;
+    const b = ed.lines[i][m.line].bbox, d = document.createElement('div'); d.className = 'fhit' + (mi === ed.find.cur ? ' cur' : '');
+    d.style.cssText = `left:${b[0] * z - 2}px;top:${b[1] * z - 1}px;width:${(b[2] - b[0]) * z + 4}px;height:${(b[3] - b[1]) * z + 2}px`;
+    ov.appendChild(d);
+  });
   applySel();
+}
+
+// ---- moving / shapes
+function moveOp(o, dx, dy) {
+  if (o.t === 'rect' || o.t === 'text' || o.t === 'image') { o.x += dx; o.y += dy; }
+  else if (o.t === 'draw') o.pts = o.pts.map(([x, y]) => [x + dx, y + dy]);
+  else if (o.t === 'shp') { o.x0 += dx; o.x1 += dx; o.y0 += dy; o.y1 += dy; }
+}
+// click selects, dragging moves (rect / freehand / shape); the item follows the pointer via a transform, committed on release
+function dragMove(ev, o, n) {
+  ev.stopPropagation(); ev.preventDefault(); select(o.id);
+  const b = clone(ed.ops), sx = ev.clientX, sy = ev.clientY, z = ed.zoom; let dx = 0, dy = 0, moved = false;
+  const isSvg = n instanceof SVGElement;
+  const move = e => {
+    dx = (e.clientX - sx) / z; dy = (e.clientY - sy) / z;
+    if (!moved && Math.hypot(dx, dy) * z < 3) return;
+    moved = true;
+    if (isSvg) n.setAttribute('transform', `translate(${dx * z},${dy * z})`); else n.style.transform = `translate(${dx * z}px,${dy * z}px)`;
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+    if (!moved) return;
+    moveOp(o, dx, dy); commit(b); renderPage(o.page);
+  };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+}
+const svgEl = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+function shpNode(o) {   // SVG for an outline shape: line / arrow / box / oval
+  const z = ed.zoom, g = svgEl('g', { stroke: o.color, 'stroke-width': o.width * z, fill: 'none' });
+  const parts = [];
+  if (o.kind === 'rect') parts.push(['rect', { x: Math.min(o.x0, o.x1) * z, y: Math.min(o.y0, o.y1) * z, width: Math.abs(o.x1 - o.x0) * z, height: Math.abs(o.y1 - o.y0) * z }]);
+  else if (o.kind === 'ellipse') parts.push(['ellipse', { cx: (o.x0 + o.x1) / 2 * z, cy: (o.y0 + o.y1) / 2 * z, rx: Math.abs(o.x1 - o.x0) / 2 * z, ry: Math.abs(o.y1 - o.y0) / 2 * z }]);
+  else {
+    parts.push(['line', { x1: o.x0 * z, y1: o.y0 * z, x2: o.x1 * z, y2: o.y1 * z }]);
+    if (o.kind === 'arrow') {
+      const a = Math.atan2(o.y1 - o.y0, o.x1 - o.x0), L = Math.max(8, o.width * 4.5);
+      const w = d => `${(o.x1 - L * Math.cos(a + d)) * z},${(o.y1 - L * Math.sin(a + d)) * z}`;
+      parts.push(['polyline', { points: `${w(.45)} ${o.x1 * z},${o.y1 * z} ${w(-.45)}` }]);
+    }
+  }
+  const hitW = Math.max(12, o.width * z + 8);   // fat invisible stroke so thin lines are easy to click
+  parts.forEach(([t, at]) => g.appendChild(svgEl(t, { ...at, class: 'hit-s', stroke: 'transparent', 'stroke-width': hitW })));
+  parts.forEach(([t, at]) => g.appendChild(svgEl(t, at)));
+  return g;
 }
 
 const shapeRadius = s => s === 'ellipse' ? '50%' : s === 'round' ? '12px' : '0';
@@ -574,7 +682,7 @@ function drawOp(o, ov, svg) {
     n.append(tx, mv, rm);
     let before = null;
     tx.addEventListener('focus', () => { if (!before) before = clone(ed.ops); select(o.id); mv.style.display = rm.style.display = ''; });
-    tx.addEventListener('input', () => { o.text = tx.innerText.replace(/\n$/, ''); });
+    tx.addEventListener('input', () => { o.text = tx.innerText.replace(/\n$/, ''); updateSelBox(); });
     tx.addEventListener('blur', () => {
       o.text = tx.innerText.replace(/\n$/, '');
       if (!o.text.trim()) { ed.ops = ed.ops.filter(x => x !== o); n.remove(); }
@@ -641,14 +749,19 @@ function drawOp(o, ov, svg) {
   if (o.t === 'rect') {
     const n = document.createElement('div'); n.className = 'shape'; n.dataset.id = o.id;
     n.style.cssText = `left:${o.x * z}px;top:${o.y * z}px;width:${o.w * z}px;height:${o.h * z}px;background:${o.color};opacity:${o.opacity};cursor:pointer;border-radius:${shapeRadius(o.shape)}`;
-    n.addEventListener('pointerdown', ev => { ev.stopPropagation(); select(o.id); });
+    n.addEventListener('pointerdown', ev => { if (ev.button === 0) dragMove(ev, o, n); });
     ov.appendChild(n); return n;
+  }
+  if (o.t === 'shp') {
+    const g = shpNode(o); g.dataset.id = o.id;
+    g.addEventListener('pointerdown', ev => { if (ev.button === 0) dragMove(ev, o, g); });
+    svg.appendChild(g); return g;
   }
   if (o.t === 'draw') {
     const p = document.createElementNS(NS, 'polyline'); p.dataset.id = o.id;
     p.setAttribute('points', o.pts.map(([x, y]) => `${x * z},${y * z}`).join(' '));
     p.setAttribute('stroke', o.color); p.setAttribute('stroke-width', o.width * z);
-    p.addEventListener('pointerdown', ev => { ev.stopPropagation(); select(o.id); });
+    p.addEventListener('pointerdown', ev => { if (ev.button === 0) dragMove(ev, o, p); });
     svg.appendChild(p); return p;
   }
 }
@@ -657,7 +770,7 @@ function beginRepEdit(n, o, before, pageIdx) {
   n.contentEditable = 'plaintext-only'; n.classList.add('editing'); n.style.userSelect = 'text'; n.style.cursor = 'text';
   ed.editNode = n; select(o.id);
   let cancelled = false;
-  n.addEventListener('input', () => { o.text = n.innerText.replace(/\n/g, ' '); });
+  n.addEventListener('input', () => { o.text = n.innerText.replace(/\n/g, ' '); updateSelBox(); });
   n.addEventListener('keydown', ev => {
     if (ev.key === 'Enter') { ev.preventDefault(); n.blur(); }
     else if (ev.key === 'Escape') { cancelled = true; ed.ops = before; n.blur(); }
@@ -665,7 +778,7 @@ function beginRepEdit(n, o, before, pageIdx) {
   n.addEventListener('blur', () => {
     if (!cancelled) {
       o.text = n.innerText.replace(/\n/g, ' ');
-      if (o.text === o.orig) ed.ops = ed.ops.filter(x => x !== o);
+      if (o.text === o.orig && o.size === o.size0) ed.ops = ed.ops.filter(x => x !== o);
       commit(before);
     }
     n.contentEditable = 'false'; n.classList.remove('editing');
@@ -718,7 +831,7 @@ async function addImages(files, at) {
     let m; try { m = await prepareImage(f); } catch (e) { toast(e.message); continue; }
     const key = ed.imgN++; ed.imgs[key] = m;
     const pg = ed.pages[at.page];
-    let w = Math.min(m.nw * .75, pg.w * .5, 400), h = w * m.nh / m.nw;   // 96dpi px → pt, capped to half a page
+    let w = Math.min(m.nw * (f.isSignature ? .3 : .75), pg.w * .5, 400), h = w * m.nh / m.nw;   // 96dpi px → pt, capped to half a page
     if (h > pg.h * .6) { h = pg.h * .6; w = h * m.nw / m.nh; }
     let cy = at.y - h / 2 + k * 16;
     if (at.fit) {   // clicked between two sections: shrink to the empty band there and centre in it
@@ -758,7 +871,7 @@ function wireStage(stage, i) {
     if (!ed.pendingImgs || ev.button !== 0) return;
     ev.preventDefault(); ev.stopPropagation();
     const files = ed.pendingImgs; setPendingImgs(null);
-    const [x, y] = pt(ev, stage); addImages(files, { page: i, x, y, fit: true });
+    const [x, y] = pt(ev, stage); addImages(files, { page: i, x, y, fit: !files[0].isSignature });
   }, true);
   stage.addEventListener('mousedown', ev => { if (ed.tool !== 'select') ev.preventDefault(); });
   stage.addEventListener('pointerdown', ev => {
@@ -788,6 +901,25 @@ function wireStage(stage, i) {
         renderPage(i);
       };
       stage.addEventListener('pointermove', move); stage.addEventListener('pointerup', up);
+    } else if (t === 'shp') {
+      const kind = el('edShpKind').value, mk = (cx, cy, shift) => {
+        let x1 = cx, y1 = cy;
+        if (shift) {
+          if (kind === 'rect' || kind === 'ellipse') { const m = Math.max(Math.abs(cx - x), Math.abs(cy - y)); x1 = x + Math.sign(cx - x || 1) * m; y1 = y + Math.sign(cy - y || 1) * m; }
+          else { const a = Math.round(Math.atan2(cy - y, cx - x) / (Math.PI / 4)) * Math.PI / 4, L = Math.hypot(cx - x, cy - y); x1 = x + L * Math.cos(a); y1 = y + L * Math.sin(a); }
+        }
+        return { kind, x0: x, y0: y, x1: Math.round(x1 * 10) / 10, y1: Math.round(y1 * 10) / 10, color: colors.shp, width: sizes.shp };
+      };
+      let tmp = mk(x, y, false), node = null;
+      const draw = e => { const [cx, cy] = pt(e, stage); tmp = mk(cx, cy, e.shiftKey); if (node) node.remove(); node = shpNode(tmp); svg.appendChild(node); };
+      const up = () => {
+        stage.removeEventListener('pointermove', draw); stage.removeEventListener('pointerup', up); stage.removeEventListener('pointercancel', up);
+        if (node) node.remove();
+        if (Math.hypot(tmp.x1 - tmp.x0, tmp.y1 - tmp.y0) * ed.zoom < 6) return;
+        mutate(() => ed.ops.push({ id: ed.nid++, t: 'shp', page: i, ...tmp }));
+        renderPage(i);
+      };
+      stage.addEventListener('pointermove', draw); stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
     } else { // highlight / whiteout
       const box = document.createElement('div'); box.className = 'shape';
       box.style.cssText = `left:${x * ed.zoom}px;top:${y * ed.zoom}px;width:0;height:0;background:${colors[t]};opacity:${t === 'highlight' ? .4 : 1};outline:1px dashed #2563eb;border-radius:${shapeRadius(el('edShape').value)}`;
@@ -815,7 +947,7 @@ function build() {
   const box = el('edPages'); box.innerHTML = '';
   ed.pages.forEach((p, i) => {
     const w = document.createElement('div'); w.className = 'edpage';
-    w.innerHTML = `<div class="ph"><span>Page ${i + 1}</span><span class="grow"></span><button data-a="rot">Rotate</button><button data-a="del">Delete page</button></div>
+    w.innerHTML = `<div class="ph"><span>Page ${i + 1}</span><span class="grow"></span><button data-a="up" title="Move page up">▲</button><button data-a="dn" title="Move page down">▼</button><button data-a="rot">Rotate</button><button data-a="del">Delete page</button></div>
       <div class="stage t-${ed.tool}"><img alt="Page ${i + 1}"><div class="ov"></div></div>`;
     w.querySelector('img').src = `${API}/editor/${ed.sid}/page/${i}?v=${ed.ver[i] = 0}`;
     wireStage(w.querySelector('.stage'), i);
@@ -826,6 +958,8 @@ function build() {
       w.classList.toggle('deleted', ed.deleted.has(i));
       e.target.textContent = ed.deleted.has(i) ? 'Restore page' : 'Delete page';
     };
+    w.querySelector('[data-a=up]').onclick = () => movePage(i, -1);
+    w.querySelector('[data-a=dn]').onclick = () => movePage(i, 1);
     w.querySelector('[data-a=rot]').onclick = async () => {
       if (ed.ops.some(o => o.page === i)) return toast('Undo or finish the edits on this page before rotating it');
       try {
@@ -838,8 +972,27 @@ function build() {
     };
     box.appendChild(w);
   });
-  layout(); renderAll();
+  ed.order = ed.pages.map((_, k) => k);
+  applyOrder(); layout(); renderAll();
 }
+function applyOrder() {   // pages stay in the DOM in original order (edits refer to them); CSS order shows the new sequence
+  ed.order.forEach((pi, pos) => {
+    const w = pageEl(pi); w.style.order = pos;
+    w.querySelector('.ph span').textContent = `Page ${pos + 1}` + (pi !== pos ? ` (was ${pi + 1})` : '');
+    w.querySelector('[data-a=up]').disabled = pos === 0; w.querySelector('[data-a=dn]').disabled = pos === ed.order.length - 1;
+  });
+  pageLabel();
+}
+function movePage(i, d) {
+  const pos = ed.order.indexOf(i), to = pos + d; if (to < 0 || to >= ed.order.length) return;
+  [ed.order[pos], ed.order[to]] = [ed.order[to], ed.order[pos]];
+  applyOrder(); pageEl(i).scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+function pageLabel() {
+  const v = ed.sid && ed.pages.length ? visiblePlace() : null;
+  el('edPageLbl').textContent = v ? `Page ${ed.order.indexOf(v.page) + 1} / ${ed.pages.length}` : '';
+}
+let lblRaf = 0; window.addEventListener('scroll', () => { if (!lblRaf) lblRaf = requestAnimationFrame(() => { lblRaf = 0; pageLabel(); }); }, { passive: true });
 
 async function loadLines(sid) {
   for (let i = 0; i < ed.pages.length; i++) {
@@ -847,6 +1000,7 @@ async function loadLines(sid) {
       const r = await fetch(`${API}/editor/${sid}/lines/${i}`);
       if (!r.ok || ed.sid !== sid) continue;
       ed.lines[i] = (await r.json()).lines;
+      if (ed.find) findCompute(false);
       if (!ed.editNode) renderPage(i);
     } catch { /* page just stays non-editable */ }
     try {
@@ -870,8 +1024,8 @@ window.openEditor = async file => {
     if (!r.ok) throw new Error(errText(await r.text()));
     j = await r.json();
   } catch (e) { return toast(e.message); }
-  Object.assign(ed, { sid: j.sid, name: file.name, pages: j.pages, ops: [], undo: [], redo: [], sel: null, deleted: new Set(), lines: {}, ver: {}, editNode: null, imgs: {}, imgN: 1, hover: null, images: {}, selImg: null });
-  el('edOpen').hidden = true; el('edMain').hidden = false;
+  Object.assign(ed, { sid: j.sid, name: file.name, pages: j.pages, ops: [], undo: [], redo: [], sel: null, deleted: new Set(), lines: {}, ver: {}, editNode: null, imgs: {}, imgN: 1, hover: null, images: {}, selImg: null, order: [], find: null });
+  el('edFind').hidden = true; el('edOpen').hidden = true; el('edMain').hidden = false;
   el('edName').textContent = `${file.name} · ${j.pages.length} page${j.pages.length === 1 ? '' : 's'}`;
   setTool('select'); build(); syncBtns(); loadLines(j.sid);
 };
@@ -879,13 +1033,13 @@ window.openEditor = async file => {
 function closeFile() {
   if (ed.ops.length && !confirm('Close this file? Your unsaved edits will be lost.')) return;
   Object.values(ed.imgs).forEach(m => URL.revokeObjectURL(m.url)); ed.imgs = {}; ed.hover = null;
-  ed.sid = null; ed.ops = []; el('edPages').innerHTML = ''; el('edMain').hidden = true; el('edOpen').hidden = false;
+  ed.sid = null; ed.ops = []; ed.find = null; el('edFind').hidden = true; el('sigModal').hidden = true; el('edPageLbl').textContent = ''; el('edPages').innerHTML = ''; el('edMain').hidden = true; el('edOpen').hidden = false;
 }
 
 // ---- saving
 async function saveAs(fmt) {
   if (document.activeElement && isEditable(document.activeElement)) document.activeElement.blur();
-  const keep = ed.pages.map((_, i) => i).filter(i => !ed.deleted.has(i));
+  const keep = ed.order.filter(i => !ed.deleted.has(i));
   const edits = ed.ops.filter(o => !(o.t === 'text' && !o.text.trim()));
   const fd = new FormData();
   fd.append('edits', JSON.stringify(edits)); fd.append('keep', JSON.stringify(keep)); fd.append('format', fmt);
@@ -925,9 +1079,25 @@ el('edInput').onchange = e => { openEditor(e.target.files[0]); e.target.value = 
 ['dragenter', 'dragover'].forEach(t => el('edDrop').addEventListener(t, ev => { ev.preventDefault(); el('edDrop').classList.add('over'); }));
 ['dragleave', 'drop'].forEach(t => el('edDrop').addEventListener(t, () => el('edDrop').classList.remove('over')));
 document.querySelectorAll('#edTools button[data-tool]').forEach(b => b.onclick =() => setTool(b.dataset.tool));
+el('edShpKind').onchange = e => {
+  const o = ed.sel && opById(ed.sel);
+  if (o && o.t === 'shp') { mutate(() => { o.kind = e.target.value; }); renderPage(o.page); }
+};
 el('edUndo').onclick = () => stepHistory(ed.undo, ed.redo);
 el('edRedo').onclick = () => stepHistory(ed.redo, ed.undo);
-const zoomBy = d => { ed.zoom = Math.min(2.6, Math.max(.6, Math.round((ed.zoom + d) * 10) / 10)); layout(); renderAll(); };
+function setZoom(z) {   // keeps whatever is in the middle of the screen in the middle
+  z = Math.min(2.6, Math.max(.6, Math.round(z * 100) / 100)); if (z === ed.zoom) return;
+  const box = el('edPages'), top = box.getBoundingClientRect().top + scrollY, mid = scrollY + innerHeight / 2, r = (mid - top) / box.offsetHeight;
+  ed.zoom = z; layout(); renderAll();
+  scrollTo(0, box.getBoundingClientRect().top + scrollY + r * box.offsetHeight - innerHeight / 2); pageLabel();
+}
+const zoomBy = d => setZoom(Math.round((ed.zoom + d) * 10) / 10);
+el('edFit').onclick = () => {
+  const live = ed.pages.filter((_, i) => !ed.deleted.has(i)), box = el('edPages'), cs = getComputedStyle(box);
+  const avail = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 4;
+  setZoom(avail / Math.max(...live.map(p => p.w)));
+};
+el('edPages').addEventListener('wheel', ev => { if (!(ev.ctrlKey || ev.metaKey)) return; ev.preventDefault(); zoomBy(ev.deltaY < 0 ? .1 : -.1); }, { passive: false });
 el('edZoomIn').onclick = () => zoomBy(.2); el('edZoomOut').onclick = () => zoomBy(-.2);
 el('edSavePdf').onclick = () => saveAs('pdf'); el('edSaveDocx').onclick = () => saveAs('docx');
 el('edClose').onclick = closeFile;
@@ -937,7 +1107,7 @@ el('edColor').oninput = e => {
   if (o.t === 'image' || o.t === 'delimg') return;
   o.color = e.target.value;
   const n = document.querySelector(`#edPages [data-id="${o.id}"]`);
-  if (n) { if (o.t === 'rect') n.style.background = o.color; else if (o.t === 'draw') n.setAttribute('stroke', o.color); else (n.querySelector('.tx') || n).style.color = o.color; }
+  if (n) { if (o.t === 'rect') n.style.background = o.color; else if (o.t === 'draw' || o.t === 'shp') n.setAttribute('stroke', o.color); else (n.querySelector('.tx') || n).style.color = o.color; }
 };
 el('edColor').onchange = () => { /* history entry for the whole color change */
   const o = ed.sel && opById(ed.sel); if (o && o.t !== 'image' && o.t !== 'delimg') { const b = clone(ed.ops); b.find(x => x.id === o.id).color = colorBefore; commit(b); }
@@ -950,10 +1120,10 @@ el('edSize').oninput = e => {
   const o = ed.sel && opById(ed.sel);
   if (!o) { sizes[ed.tool] = v; return; }
   if (o.t === 'rect' || o.t === 'image' || o.t === 'delimg') return;
-  mutate(() => { if (o.t === 'draw') o.width = v; else o.size = v; });
+  mutate(() => { if (o.t === 'draw' || o.t === 'shp') o.width = v; else o.size = v; });
   const n = document.querySelector(`#edPages [data-id="${o.id}"]`);
-  if (o.t === 'draw') n && n.setAttribute('stroke-width', v * ed.zoom);
-  else if (n) { const t = n.querySelector('.tx') || n; t.style.fontSize = v * ed.zoom + 'px'; }
+  if (o.t === 'draw' || o.t === 'shp') n && (o.t === 'shp' ? renderPage(o.page) : n.setAttribute('stroke-width', v * ed.zoom));
+  else if (n) { const t = n.querySelector('.tx') || n; t.style.fontSize = v * ed.zoom + 'px'; updateSelBox(); }
 };
 // ---- Add-text options (apply to the selected text box, or become the defaults for the next one)
 function textTarget() { const o = ed.sel && opById(ed.sel); return o && o.t === 'text' ? o : null; }
@@ -981,7 +1151,18 @@ el('edBgOn').onchange = bgChange; el('edBg').oninput = () => { el('edBgOn').chec
 document.addEventListener('keydown', ev => {
   if (el('editorApp').hidden || !ed.sid) return;
   const typing = isEditable(document.activeElement);
-  if ((ev.ctrlKey || ev.metaKey) && !typing && (ev.key === 'z' || ev.key === 'y')) {
+  const sel = ed.sel && opById(ed.sel), movable = sel && sel.t !== 'replace' && sel.t !== 'delimg';
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'f') { ev.preventDefault(); openFind(); }
+  else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'd' && !typing && movable) {   // duplicate the selected item
+    ev.preventDefault(); let c;
+    mutate(() => { c = clone(sel); c.id = ed.nid++; moveOp(c, 12, 12); ed.ops.push(c); });
+    renderPage(sel.page); select(c.id);
+  } else if (/^Arrow/.test(ev.key) && !typing && movable && !ev.ctrlKey && !ev.metaKey) {   // nudge (Shift = 10pt)
+    ev.preventDefault();
+    const st = ev.shiftKey ? 10 : 1, dx = ev.key === 'ArrowLeft' ? -st : ev.key === 'ArrowRight' ? st : 0, dy = ev.key === 'ArrowUp' ? -st : ev.key === 'ArrowDown' ? st : 0, now = Date.now();
+    if (nudge.id === sel.id && now - nudge.t < 700) moveOp(sel, dx, dy); else mutate(() => moveOp(sel, dx, dy));
+    nudge.id = sel.id; nudge.t = now; renderPage(sel.page);
+  } else if ((ev.ctrlKey || ev.metaKey) && !typing && (ev.key === 'z' || ev.key === 'y')) {
     ev.preventDefault(); ev.key === 'z' && !ev.shiftKey ? stepHistory(ed.undo, ed.redo) : stepHistory(ed.redo, ed.undo);
   } else if ((ev.key === 'Delete' || ev.key === 'Backspace') && !typing && ed.selImg) {
     ev.preventDefault(); removeExisting(ed.selImg.page, ed.selImg.ix);
@@ -991,5 +1172,107 @@ document.addEventListener('keydown', ev => {
     mutate(() => { ed.ops = ed.ops.filter(x => x.id !== id); }); ed.sel = null; renderPage(o.page); updateControls();
   }
 });
+// ---- find & replace (works on the text lines the editor already knows about)
+const lineText = (i, k) => { const o = ed.ops.find(x => x.t === 'replace' && x.page === i && x.line === k); return o ? o.text : ed.lines[i][k].text; };
+const escRe = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const findRe = () => { const q = el('edFindQ').value; return q ? new RegExp(escRe(q), el('edFindCase').checked ? 'g' : 'gi') : null; };
+function findCompute(render = true) {
+  if (!ed.find) return;
+  const re = findRe(), old = ed.find.matches[ed.find.cur], ms = [];
+  if (re) ed.order.forEach(i => { if (ed.deleted.has(i)) return; (ed.lines[i] || []).forEach((_, k) => { re.lastIndex = 0; if (re.test(lineText(i, k))) ms.push({ page: i, line: k }); }); });
+  ed.find.matches = ms;
+  const keep = old ? ms.findIndex(m => m.page === old.page && m.line === old.line) : -1;
+  ed.find.cur = keep >= 0 ? keep : Math.min(ed.find.cur, Math.max(ms.length - 1, 0));
+  el('edFindCount').textContent = !el('edFindQ').value ? '' : ms.length ? `${ed.find.cur + 1} of ${ms.length} line${ms.length > 1 ? 's' : ''}` : 'No matches';
+  ['edFindPrev', 'edFindNext', 'edRepOne', 'edRepAll'].forEach(id => el(id).disabled = !ms.length);
+  if (render) renderAll();
+}
+function findGo(d, scroll = true) {
+  const f = ed.find; if (!f || !f.matches.length) return;
+  f.cur = (f.cur + d + f.matches.length) % f.matches.length;
+  findCompute(); if (!scroll) return;
+  const m = f.matches[f.cur], b = ed.lines[m.page][m.line].bbox;
+  scrollBy({ top: stageOf(m.page).getBoundingClientRect().top + b[1] * ed.zoom - innerHeight / 3, behavior: 'smooth' });
+}
+function openFind() {
+  if (!ed.sid) return;
+  if (!ed.find) ed.find = { matches: [], cur: 0 };
+  el('edFind').hidden = false; el('edFindQ').focus(); el('edFindQ').select(); findCompute();
+}
+function closeFind() { ed.find = null; el('edFind').hidden = true; renderAll(); }
+function replaceLines(list) {   // list of {page, line}: swaps every occurrence inside those lines for the replacement text
+  const re = findRe(), rep = el('edFindR').value; if (!re || !list.length) return 0;
+  let n = 0;
+  mutate(() => list.forEach(({ page, line }) => {
+    let o = ed.ops.find(x => x.t === 'replace' && x.page === page && x.line === line);
+    if (!o) { o = newRepOp(page, line, ed.lines[page][line]); ed.ops.push(o); }
+    re.lastIndex = 0; o.text = o.text.replace(re, () => { n++; return rep; });
+    if (o.text === o.orig) ed.ops = ed.ops.filter(x => x !== o);
+  }));
+  return n;
+}
+el('edFindBtn').onclick = openFind;
+el('edFindClose').onclick = closeFind;
+el('edFindQ').oninput = () => { if (ed.find) { ed.find.cur = 0; findCompute(); if (ed.find.matches.length) findGo(0); } };
+el('edFindCase').onchange = () => { if (ed.find) { ed.find.cur = 0; findCompute(); } };
+el('edFindNext').onclick = () => findGo(1); el('edFindPrev').onclick = () => findGo(-1);
+el('edFind').addEventListener('keydown', ev => {
+  if (ev.key === 'Escape') { ev.preventDefault(); closeFind(); }
+  else if (ev.key === 'Enter' && ev.target.id !== 'edFindR') { ev.preventDefault(); findGo(ev.shiftKey ? -1 : 1); }
+  else if (ev.key === 'Enter') { ev.preventDefault(); el('edRepOne').click(); }
+});
+el('edRepOne').onclick = () => {
+  const f = ed.find; if (!f || !f.matches.length) return;
+  const m = f.matches[f.cur], at = f.cur; replaceLines([m]); findCompute();
+  f.cur = Math.min(at, Math.max(f.matches.length - 1, 0)); findGo(0);
+  toast(f.matches.length ? 'Replaced — next match selected' : 'Replaced — no more matches');
+};
+el('edRepAll').onclick = () => {
+  const f = ed.find; if (!f || !f.matches.length) return;
+  const n = replaceLines(f.matches.slice()); findCompute(); toast(`Replaced ${n} occurrence${n === 1 ? '' : 's'}`);
+};
+
+// ---- signature pad: draw once, remembered on this device, placed like any image
+const sig = { pad: el('sigPad'), ink: false, last: null };
+const sigCtx = sig.pad.getContext('2d');
+const sigStore = { get() { try { return localStorage.getItem('bp-signature'); } catch { return null; } }, set(v) { try { localStorage.setItem('bp-signature', v); } catch { /* storage blocked */ } } };
+function sigClear() { sigCtx.clearRect(0, 0, sig.pad.width, sig.pad.height); sig.ink = false; sig.last = null; }
+function openSign() {
+  if (!ed.sid) return toast('Open a PDF first');
+  sigClear(); el('sigSaved').hidden = !sigStore.get(); el('sigModal').hidden = false;
+}
+const sigPt = ev => { const r = sig.pad.getBoundingClientRect(); return [(ev.clientX - r.left) * sig.pad.width / r.width, (ev.clientY - r.top) * sig.pad.height / r.height]; };
+sig.pad.addEventListener('pointerdown', ev => {
+  ev.preventDefault(); sig.pad.setPointerCapture(ev.pointerId); sig.last = sigPt(ev); sig.ink = true;
+  sigCtx.fillStyle = '#111'; sigCtx.beginPath(); sigCtx.arc(sig.last[0], sig.last[1], 1.8, 0, Math.PI * 2); sigCtx.fill();
+});
+sig.pad.addEventListener('pointermove', ev => {
+  if (!sig.last) return;
+  const p = sigPt(ev); sigCtx.strokeStyle = '#111'; sigCtx.lineWidth = 3.6; sigCtx.lineCap = sigCtx.lineJoin = 'round';
+  sigCtx.beginPath(); sigCtx.moveTo(sig.last[0], sig.last[1]); sigCtx.lineTo(p[0], p[1]); sigCtx.stroke(); sig.last = p;
+});
+['pointerup', 'pointercancel'].forEach(t => sig.pad.addEventListener(t, () => { sig.last = null; }));
+function sigPlace(blob) {
+  const f = new File([blob], 'signature.png', { type: 'image/png' }); f.isSignature = true;
+  el('sigModal').hidden = true; setPendingImgs([f]);
+}
+el('sigUse').onclick = () => {
+  if (!sig.ink) return toast('Draw your signature first');
+  const { width: W, height: H } = sig.pad, d = sigCtx.getImageData(0, 0, W, H).data;
+  let x0 = W, y0 = H, x1 = 0, y1 = 0;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > 8) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  const pad = 6; x0 = Math.max(x0 - pad, 0); y0 = Math.max(y0 - pad, 0); x1 = Math.min(x1 + pad, W - 1); y1 = Math.min(y1 + pad, H - 1);
+  const c = document.createElement('canvas'); c.width = x1 - x0 + 1; c.height = y1 - y0 + 1;
+  c.getContext('2d').drawImage(sig.pad, x0, y0, c.width, c.height, 0, 0, c.width, c.height);
+  if (el('sigRemember').checked) sigStore.set(c.toDataURL('image/png'));
+  c.toBlob(b => b && sigPlace(b), 'image/png');
+};
+el('sigSaved').onclick = async () => { const u = sigStore.get(); if (u) sigPlace(await (await fetch(u)).blob()); };
+el('sigClear').onclick = sigClear;
+el('sigCancel').onclick = () => { el('sigModal').hidden = true; };
+el('sigModal').addEventListener('pointerdown', ev => { if (ev.target === el('sigModal')) el('sigModal').hidden = true; });
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !el('sigModal').hidden) el('sigModal').hidden = true; });
+el('edSign').onclick = openSign;
+const nudge = { id: 0, t: 0 };
 window.addEventListener('beforeunload', ev => { if (ed.ops.length) { ev.preventDefault(); ev.returnValue = ''; } });
 })();

@@ -58,22 +58,27 @@
   </div>
 
   <div class="editor wrap" id="editorApp" hidden>
-    <div class="ed-intro">
-      <span class="kicker"><svg><use href="#i-lock"/></svg> Private · files never leave your PC</span>
-      <h1>Edit PDF files <em>online</em></h1>
-      <p>Edit text, add images, highlight, draw and export — all privately on your PC.</p>
-      <div class="cta-row"><a class="btn" href="#edPick" onclick="document.getElementById('edPick').click();return false;">Select PDF file</a><a class="btn ghost" href="#features">See features</a></div>
-      <ul>
-        <li>Edit existing text</li><li>Add text &amp; images</li><li>Highlight &amp; cover</li><li>Save as PDF or Word</li>
-      </ul>
-    </div>
-    <div class="panel" id="edOpen">
-      <div class="drop" id="edDrop">
-        <div class="cloud"><svg><use href="#i-upload"/></svg></div>
-        <button class="btn" id="edPick"><svg><use href="#i-doc"/></svg> Select PDF file</button>
-        <div class="hint">or drag &amp; drop a PDF here</div>
+    <div class="ed-head ed-intro"><h1 class="ed-title">Free Online PDF Editor</h1><p class="ed-sub">Open a PDF, change what needs changing, and save. Nothing is uploaded.</p></div>
+    <div class="dz-frame" id="edOpen">
+      <div class="drop dz" id="edDrop" onclick="if(!event.target.closest('#edPick'))document.getElementById('edInput').click()">
+        <svg class="dz-art" viewBox="0 0 120 80" fill="none" stroke="#fff" stroke-width="1.2" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 8h28l8 8v54H6z"/><path d="M12 26h24M12 34h24M12 42h24M20 22v24M28 22v24" opacity=".7"/>
+          <path d="M78 8h22l8 8v54H78z"/><circle cx="94" cy="38" r="8"/><path d="M94 38v-8a8 8 0 0 1 8 8z" fill="#fff" opacity=".85"/>
+          <path d="M34 2h38l10 10v66H34z" fill="#12aeb4"/><path d="M72 2v10h10M42 24h24M42 32h18" opacity=".8"/>
+          <rect x="40" y="46" width="22" height="9" rx="1.5" fill="#fff"/><text x="51" y="53" font-size="6.5" font-weight="700" text-anchor="middle" fill="#12aeb4" stroke="none" font-family="Arial,sans-serif">PDF</text>
+        </svg>
+        <button class="dz-btn" id="edPick" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M12 11v6M9 14h6"/></svg>Choose files</button>
+        <div class="dz-hint">or drop files here</div>
         <input type="file" id="edInput" accept=".pdf" hidden>
       </div>
+    </div>
+    <div class="ed-info">
+      <p>Edit your PDFs for free on any device. Retype a line, add a signature, cover a figure or mark up a page, and the layout stays exactly as it was.</p>
+      <ul class="checks">
+        <li><svg><use href="#i-check"/></svg>Free PDF editing across Mac, Windows and mobile</li>
+        <li><svg><use href="#i-check"/></svg>No account, no watermark</li>
+        <li><svg><use href="#i-check"/></svg>Files never leave your PC</li>
+      </ul>
     </div>
     <div id="edMain" hidden>
       <div class="ed-bar" id="edBar">
@@ -83,13 +88,19 @@
           <button data-tool="highlight" title="Drag to highlight an area">Highlight</button>
           <button data-tool="whiteout" title="Drag to cover an area with a solid box">Cover</button>
           <button data-tool="draw" title="Draw freehand">Draw</button>
+          <button data-tool="shp" title="Drag to draw a line, arrow, box or oval outline">Shapes</button>
           <button id="edImg" title="Add an image (or paste / drop one anywhere on the page)">Image</button>
+          <button id="edSign" title="Draw your signature once, then click to place it">Sign</button>
+          <button id="edFindBtn" title="Find &amp; replace text (Ctrl+F)">Find</button>
           <input type="file" id="edImgInput" accept="image/*" multiple hidden>
         </div>
         <div class="grp">
           <label title="Shape used by Cover and Highlight">Shape <select id="edShape"><option value="rect">Rectangle</option><option value="round">Rounded</option><option value="ellipse">Ellipse</option></select></label>
           <label title="Color">Color<input type="color" id="edColor" value="#000000"></label>
           <label title="Text size in points / pen width">Size <input type="number" id="edSize" min="1" max="200" value="12"></label>
+        </div>
+        <div class="grp" id="edShpOpts" hidden>
+          <label title="Kind of shape">Kind <select id="edShpKind"><option value="line">Line</option><option value="arrow">Arrow</option><option value="rect">Box</option><option value="ellipse">Oval</option></select></label>
         </div>
         <div class="grp txt-opts" id="edTextOpts" hidden>
           <label title="Font family">Font <select id="edFont"><option value="sans">Sans</option><option value="serif">Serif</option><option value="mono">Mono</option></select></label>
@@ -106,6 +117,8 @@
           <button id="edZoomOut" title="Zoom out" aria-label="Zoom out">−</button>
           <span id="edZoomLbl">140%</span>
           <button id="edZoomIn" title="Zoom in" aria-label="Zoom in">+</button>
+          <button id="edFit" title="Fit page to width">Fit</button>
+          <span id="edPageLbl" class="pg-lbl" title="Page in view"></span>
         </div>
         <div class="grp end">
           <button class="btn sm" id="edSavePdf">Save as PDF</button>
@@ -113,74 +126,71 @@
           <button class="link-btn" id="edClose">Close file</button>
         </div>
       </div>
-      <div class="ed-name" id="edName"></div> 
+      <div class="ed-name" id="edName"></div>
+      <div class="ed-find" id="edFind" hidden>
+        <input type="search" id="edFindQ" placeholder="Find text…" aria-label="Find text" autocomplete="off">
+        <input type="text" id="edFindR" placeholder="Replace with…" aria-label="Replace with" autocomplete="off">
+        <label><input type="checkbox" id="edFindCase"> Match case</label>
+        <span id="edFindCount" class="cnt"></span>
+        <button type="button" id="edFindPrev" title="Previous (Shift+Enter)">↑</button>
+        <button type="button" id="edFindNext" title="Next (Enter)">↓</button>
+        <button type="button" id="edRepOne">Replace</button>
+        <button type="button" id="edRepAll">Replace all</button>
+        <button type="button" id="edFindClose" aria-label="Close find">✕</button>
+      </div>
       <div id="edPages"></div>
-    </div>
-  </div>
-
-  <section class="stats wrap" aria-label="Highlights">
-    <div class="stats-in">
-      <div class="stat"><b>100%</b><span>Private &amp; local</span></div>
-      <div class="stat"><b>0</b><span>Sign-ups required</span></div>
-      <div class="stat"><b>PDF + Word</b><span>Export formats</span></div>
-      <div class="stat"><b>Free</b><span>No limits, no watermark</span></div>
-    </div>
-  </section>
-
-  <section class="preview wrap" aria-label="Editor preview">
-    <div class="win" aria-hidden="true">
-      <div class="win-top"><i></i><i></i><i></i><span>invoice.pdf — BP PDF Editor</span></div>
-      <div class="win-tools"><b class="on">Edit text</b><b>Add text</b><b>Highlight</b><b>Cover</b><b>Draw</b><b>Image</b><b class="sv">Save as PDF</b></div>
-      <div class="win-body">
-        <div class="sheet">
-          <span class="tag">INVOICE</span>
-          <h4>Northwind Studio</h4><small>Invoice #2048 · 14 Nov 2026</small>
-          <div class="ln w1"></div><div class="ln w2"></div><div class="ln w3"></div>
-          <div class="ln hl"></div><div class="ln w4"></div>
-          <span class="edit">Total due: $1,250.00</span>
-          <span class="sig">B. Pandey</span>
+      <div class="sig-modal" id="sigModal" hidden role="dialog" aria-modal="true" aria-label="Draw your signature">
+        <div class="sig-card">
+          <h3>Draw your signature</h3>
+          <canvas id="sigPad" width="560" height="200"></canvas>
+          <div class="sig-act">
+            <button type="button" class="link-btn" id="sigClear">Clear</button>
+            <button type="button" class="link-btn" id="sigSaved" hidden>Use saved</button>
+            <span class="grow"></span>
+            <button type="button" class="btn sm ghost" id="sigCancel">Cancel</button>
+            <button type="button" class="btn sm" id="sigUse">Use signature</button>
+          </div>
+          <label class="sig-keep"><input type="checkbox" id="sigRemember" checked> Remember on this device</label>
         </div>
       </div>
     </div>
-  </section>
+  </div>
+
+
 
   <section class="block wrap" id="how">
-    <div class="eyebrow">How it works</div>
-    <h2 id="howTitle">Three simple steps</h2>
+    <h2 id="howTitle">How it works</h2>
     <p class="sub" id="howSub"></p>
       <div id="steps" class="grid-3"></div>
   </section>
 
   <section class="block wrap" id="features">
-    <div class="eyebrow">Features</div>
-    <h2>Everything you need, nothing you don’t</h2>
-    <p class="sub">A complete PDF toolkit that is fast, private and simple to use.</p>
+    <h2>What you can do with a PDF here</h2>
+    <p class="sub">Every tool works on the page itself, so what you see is what you save.</p>
     <div class="grid-3">
-      <div class="card"><div class="ci"><svg><use href="#i-doc"/></svg></div><h3>Edit existing text</h3><p>Click any line of text in your PDF and retype it. Font, size and colour are kept.</p></div>
-      <div class="card"><div class="ci"><svg><use href="#i-layers"/></svg></div><h3>Add text &amp; images</h3><p>Place new text or drop in logos and signatures, then move and resize them freely.</p></div>
-      <div class="card"><div class="ci"><svg><use href="#i-zap"/></svg></div><h3>Highlight, cover &amp; draw</h3><p>Mark up pages, redact with solid boxes or sketch freehand with undo and redo.</p></div>
-      <div class="card"><div class="ci"><svg><use href="#i-lock"/></svg></div><h3>Private by design</h3><p>Everything runs on your PC. No cloud, no tracking, no accounts.</p></div>
-      <div class="card"><div class="ci"><svg><use href="#i-download"/></svg></div><h3>Save as PDF or Word</h3><p>Export the finished file as a PDF, or as an editable Word document.</p></div>
-      <div class="card"><div class="ci"><svg><use href="#i-moon"/></svg></div><h3>Light &amp; dark mode</h3><p>Follows your system theme, with a manual toggle in the header.</p></div>
+      <div class="card"><h3>Edit existing text</h3><p>Click any line of text in your PDF and retype it. Font, size and colour are kept.</p></div>
+      <div class="card"><h3>Add text &amp; images</h3><p>Place new text or drop in logos and signatures, then move and resize them freely.</p></div>
+      <div class="card"><h3>Highlight, cover &amp; draw</h3><p>Mark up pages, redact with solid boxes or sketch freehand with undo and redo.</p></div>
+      <div class="card"><h3>Private</h3><p>The file is processed on your PC. There is no cloud copy and no account.</p></div>
+      <div class="card"><h3>Save as PDF or Word</h3><p>Export the finished file as a PDF, or as an editable Word document.</p></div>
+      <div class="card"><h3>Light and dark</h3><p>Follows your system theme. Switch it with the button in the header.</p></div>
     </div>
   </section>
 
   <section class="block wrap" id="usecases">
-    <div class="eyebrow">Use cases</div>
-    <h2>Fix it in seconds, whatever the document</h2>
-    <p class="sub">From a typo in an invoice to a last-minute contract change.</p>
+    <h2>Made for the small corrections</h2>
+    <p class="sub">A wrong date, an old address, a missing signature.</p>
     <div class="usecases">
-      <div class="card"><div class="ci"><svg><use href="#i-doc"/></svg></div><h3>Invoices &amp; receipts</h3><p>Correct amounts, dates and customer details.</p></div>
-      <div class="card"><div class="ci"><svg><use href="#i-layers"/></svg></div><h3>Contracts</h3><p>Update clauses, add notes and cover sensitive text.</p></div>
-      <div class="card"><div class="ci"><svg><use href="#i-check"/></svg></div><h3>Forms</h3><p>Fill in fields by adding text anywhere on the page.</p></div>
-      <div class="card"><div class="ci"><svg><use href="#i-zap"/></svg></div><h3>Resumes &amp; reports</h3><p>Fix a typo, swap a logo or highlight key figures.</p></div>
+      <div class="card"><h3>Invoices &amp; receipts</h3><p>Correct amounts, dates and customer details.</p></div>
+      <div class="card"><h3>Contracts</h3><p>Update clauses, add notes and cover sensitive text.</p></div>
+      <div class="card"><h3>Forms</h3><p>Fill in fields by adding text anywhere on the page.</p></div>
+      <div class="card"><h3>Resumes &amp; reports</h3><p>Fix a typo, swap a logo or highlight key figures.</p></div>
     </div>
   </section>
 
   <section class="block wrap" id="faq">
-    <div class="eyebrow">FAQ</div>
-    <h2>Frequently asked questions</h2>
-    <p class="sub">Quick answers to common questions.</p>
+    <h2>Questions</h2>
+    <p class="sub">Short answers about privacy, text editing and file support.</p>
     <div class="faq">
       <div id="faqList"></div>
     </div>

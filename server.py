@@ -366,20 +366,39 @@ def pdf_to_word():
         shutil.rmtree(work, ignore_errors=True)
     return send_file(data, mimetype=DOCX_MIME)
 
+@app.errorhandler(Exception)
+def _unhandled(e):
+    """Any unexpected crash becomes a short readable message instead of a traceback page."""
+    if isinstance(e, HTTPException):
+        return e
+    app.logger.exception('Unhandled error on %s', request.path)
+    from markupsafe import escape
+    msg = escape(f'{type(e).__name__}: {e}'[:200])
+    return Response(f'<p>The server hit an unexpected error ({msg}). Please try again; if it keeps happening, check the server console.</p>',
+                    status=500, mimetype='text/html')
+
 # ---------------------------------------------------------------- PDF editor
 EDIT_DIR = os.path.join(tempfile.gettempdir(), 'pdf-editor-sessions')
 os.makedirs(EDIT_DIR, exist_ok=True)
+
+def _db_try(fn, *args, default=None):
+    """Session bookkeeping in MySQL must never stop editing: the PDF itself lives in a file."""
+    try:
+        return fn(*args)
+    except Exception as e:
+        app.logger.warning('database call %s failed: %s', getattr(fn, '__name__', fn), e)
+        return default
 
 def _session_path(sid):
     if not re.fullmatch(r'[0-9a-f]{32}', sid):
         abort(404)
     p = os.path.join(EDIT_DIR, sid + '.pdf')
-    if not os.path.exists(p) or not db.session_exists(sid):
+    if not os.path.exists(p) or not _db_try(db.session_exists, sid, default=True):
         abort(404, 'This editing session has expired. Open the PDF again')
     return p
 
 def _cleanup_sessions(max_age=6 * 3600):
-    for sid in db.pop_expired(max_age):
+    for sid in _db_try(db.pop_expired, max_age, default=[]):
         try:
             os.remove(os.path.join(EDIT_DIR, sid + '.pdf'))
         except OSError:
@@ -407,7 +426,7 @@ def editor_open():
     doc = fitz.open(path)
     pages = [{'w': p.rect.width, 'h': p.rect.height} for p in doc]
     doc.close()
-    db.create_session(sid, up.filename or '', len(pages), os.path.getsize(path))
+    _db_try(db.create_session, sid, up.filename or '', len(pages), os.path.getsize(path))
     return {'sid': sid, 'pages': pages}
 
 @app.get('/editor/<sid>/page/<int:n>')
@@ -527,32 +546,85 @@ def _font_family(name):
     n = re.split(r'[-,]', n)[0]
     return re.sub(r'[^a-z]', '', n.lower())
 
+_FONT_INDEX = None
+
+def _font_dirs():
+    return [os.path.join(HERE, 'fonts'),
+            os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'Windows', 'Fonts'),
+            WIN_FONTS]
+
+def _find_font_file(name, bold, italic):
+    """Look for a real font file of the PDF's own family (project 'fonts' folder, per-user and system fonts)."""
+    global _FONT_INDEX
+    if _FONT_INDEX is None:
+        _FONT_INDEX = []
+        for d in _font_dirs():
+            try:
+                for fn in os.listdir(d):
+                    if fn.lower().endswith(('.ttf', '.otf')) and '[' not in fn:  # variable fonts can't pick a weight
+                        _FONT_INDEX.append((re.sub(r'[^a-z]', '', os.path.splitext(fn)[0].lower()), os.path.join(d, fn)))
+            except OSError:
+                pass
+    fam = re.sub(r'(regular|roman|book|normal|bold|italic|oblique)+$', '', _font_family(name))   # 'Inter Regular' -> 'inter'
+    if not fam:
+        return None
+    styles = {(False, False): ('', 'regular'), (True, False): ('bold', 'bd'), (False, True): ('italic', 'it', 'oblique'),
+              (True, True): ('bolditalic', 'bdit', 'boldoblique', 'z')}[(bold, italic)]
+    wanted = {fam + st for st in styles}
+    for stem, path in _FONT_INDEX:
+        if stem in wanted:
+            return path
+    return None
+
+def _norm_font(n):
+    return re.sub(r'[^a-z0-9]', '', re.sub(r'^[A-Z]{6}\+', '', n or '').lower())
+
+def _embedded_font(op, page):
+    """The font object embedded in the PDF that belongs to this line (exact name first, then same family)."""
+    name = op.get('font')
+    if not name:
+        return None
+    want, bold = _norm_font(name), bool(op.get('bold'))
+    cands = []
+    try:
+        for f in page.get_fonts(full=True):
+            if f[2] in ('TrueType', 'OpenType', 'Type1', 'CFF', 'Type0') and f[1] != 'n/a':
+                n = _norm_font(f[3])
+                if n == want:
+                    return f
+                if n.startswith(want) or want.startswith(n):
+                    cands.append((('bold' in n) != bold, f))
+    except Exception:
+        return None
+    return min(cands, key=lambda c: c[0])[1] if cands else None
+
 def _orig_font(op, text, page):
-    """Keep the line's own typeface: reuse the embedded font when it has every glyph needed, else a matching system font."""
+    """Keep the line's own typeface: reuse the embedded font when it has every glyph needed, else a real font of the same family."""
     name = op.get('font')
     if not name or not text:
         return None
     bold, italic = bool(op.get('bold')), bool(op.get('italic'))
-    base = re.sub(r'^[A-Z]{6}\+', '', name)
     try:
-        for f in page.get_fonts(full=True):
-            if f[2] in ('TrueType', 'OpenType', 'Type1', 'CFF') and f[1] != 'n/a' and re.sub(r'^[A-Z]{6}\+', '', f[3]) == base:
-                buf = page.parent.extract_font(f[0])[3]
-                if buf and all(fitz.Font(fontbuffer=buf).has_glyph(ord(c)) for c in text if c != ' ' and c != ' '):
-                    fname = 'o%d' % f[0]
-                    page.insert_font(fontname=fname, fontbuffer=buf)
-                    return fname
-                break
+        f = _embedded_font(op, page)
+        if f:
+            buf = page.parent.extract_font(f[0])[3]
+            # subset fonts only hold the glyphs the document already used, and often have no character map at all
+            if buf and all(fitz.Font(fontbuffer=buf).has_glyph(ord(c)) for c in text if c not in '  '):
+                fname = 'o%d' % f[0]
+                page.insert_font(fontname=fname, fontbuffer=buf)
+                return fname
     except Exception:
         pass
     files = _SYS_FONTS.get(_font_family(name))
+    cands = [_find_font_file(name, bold, italic)]
     if files:
-        p = os.path.join(WIN_FONTS, files[int(bold) + 2 * int(italic)])
-        if os.path.exists(p):
+        cands.append(os.path.join(WIN_FONTS, files[int(bold) + 2 * int(italic)]))
+    for p in cands:
+        if p and os.path.exists(p):
             try:
-                fnm = 's' + re.sub(r'\W', '', files[int(bold) + 2 * int(italic)])
+                fnm = 's' + re.sub(r'\W', '', os.path.basename(p))
                 page.insert_font(fontname=fnm, fontfile=p)
-                if all(fitz.Font(fontfile=p).has_glyph(ord(c)) for c in text if c != ' '):
+                if all(fitz.Font(fontfile=p).has_glyph(ord(c)) for c in text if c not in '  '):
                     return fnm
             except Exception:
                 pass
@@ -667,12 +739,16 @@ def _put_spans(page, o, dm):
             runs[-1][1] += ch
         else:
             runs.append([st, ch])
+    try:   # the user resized this line: scale every span by the same factor
+        k = min(max(float(o['size']) / float(o['size0']), .1), 10) if o.get('size0') else 1.0
+    except (TypeError, ValueError, ZeroDivisionError, KeyError):
+        k = 1.0
     x, y = o['origin']
-    x = _anchor_x(page, o, x, sum(_run_width(page, dict(st), txt) for st, txt in runs))
+    x = _anchor_x(page, o, x, sum(_run_width(page, dict(st, size=float(st['size']) * k), txt) for st, txt in runs))
     for st, txt in runs:
-        op = dict(st)
+        op = dict(st, size=float(st['size']) * k)
         pt = fitz.Point(x, y) * dm
-        page.insert_text(pt, txt, fontname=_font_for(op, txt, page), fontsize=float(st['size']),
+        page.insert_text(pt, txt, fontname=_font_for(op, txt, page), fontsize=float(op['size']),
                          color=_hex(st.get('color', '#000000')), rotate=page.rotation)
         x += _run_width(page, op, txt)
 
@@ -740,6 +816,35 @@ def _stroke_png(o):
     return box, _vec_png(box.width, box.height, draw)
 
 
+def _paint_shp(pg, o, p0, p1):
+    """Outline shapes: line, arrow, rect, ellipse (stroke only)."""
+    color = _hex(o.get('color', '#e11d48'))
+    wd = min(max(float(o.get('width', 2)), .25), 100)
+    kind = o.get('kind', 'line')
+    if kind in ('rect', 'ellipse'):
+        r = fitz.Rect(min(p0.x, p1.x), min(p0.y, p1.y), max(p0.x, p1.x), max(p0.y, p1.y))
+        if r.width < .1 or r.height < .1:
+            return
+        (pg.draw_oval if kind == 'ellipse' else pg.draw_rect)(r, color=color, fill=None, width=wd)
+        return
+    pg.draw_line(p0, p1, color=color, width=wd, lineCap=1)
+    if kind == 'arrow':
+        ang, ln = math.atan2(p1.y - p0.y, p1.x - p0.x), max(8.0, wd * 4.5)
+        wings = [fitz.Point(p1.x - ln * math.cos(ang + d), p1.y - ln * math.sin(ang + d)) for d in (.45, -.45)]
+        pg.draw_polyline([wings[0], p1, wings[1]], color=color, width=wd, lineCap=1, lineJoin=1, closePath=False)
+
+
+def _shp_png(o):
+    """Word export drops vector shapes, so shapes are rasterised to a transparent PNG."""
+    p0, p1 = fitz.Point(o['x0'], o['y0']), fitz.Point(o['x1'], o['y1'])
+    pad = float(o.get('width', 2)) + (max(8.0, float(o.get('width', 2)) * 4.5) if o.get('kind') == 'arrow' else 0) + 2
+    box = fitz.Rect(min(p0.x, p1.x) - pad, min(p0.y, p1.y) - pad, max(p0.x, p1.x) + pad, max(p0.y, p1.y) + pad)
+
+    def draw(pg, _b):
+        _paint_shp(pg, o, fitz.Point(p0.x - box.x0, p0.y - box.y0), fitz.Point(p1.x - box.x0, p1.y - box.y0))
+    return box, _vec_png(box.width, box.height, draw)
+
+
 def apply_edits(path, edits, keep, images=None, for_docx=False):
     doc = fitz.open(path)
     byp = {}
@@ -798,6 +903,11 @@ def apply_edits(path, edits, keep, images=None, for_docx=False):
                 pts = [fitz.Point(x, y) * dm for x, y in o['pts']]
                 page.draw_polyline(pts, color=_hex(o.get('color', '#e11d48')),
                                    width=float(o.get('width', 2)), lineCap=1, lineJoin=1, closePath=False)
+            elif t == 'shp' and for_docx:
+                box, png = _shp_png(o)
+                page.insert_image(box * dm, stream=png, keep_proportion=False, rotate=page.rotation, overlay=True)
+            elif t == 'shp':
+                _paint_shp(page, o, fitz.Point(o['x0'], o['y0']) * dm, fitz.Point(o['x1'], o['y1']) * dm)
             elif t == 'text' and o.get('text', '').strip():
                 _put_textbox(page, o, dm)
             elif t == 'image' and images and str(o.get('img')) in images:
@@ -824,7 +934,7 @@ def editor_save(sid):
         abort(400, 'Bad edit data')
     if keep is not None and not keep:
         abort(400, 'Keep at least one page')
-    db.touch_session(sid)
+    _db_try(db.touch_session, sid)
     try:
         images = {k[4:]: f.read() for k, f in request.files.items() if k.startswith('img_')}
         data = apply_edits(path, edits, keep, images, for_docx=request.form.get('format') == 'docx')
