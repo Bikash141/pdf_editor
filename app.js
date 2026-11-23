@@ -244,17 +244,35 @@ window.addEventListener('drop', ev => {
 $('clear').onclick = () => { if (!busy) { items.forEach(i => i.url && URL.revokeObjectURL(i.url)); items = []; draw(); } };
 
 const size = n => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(0) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+
+// upload limit: 100 MB (keep in step with MAX_UPLOAD_MB in server.py)
+const MAX_MB = 100, MAX_BYTES = MAX_MB * 1048576;
+const tooBig = f => f.size > MAX_BYTES;
+function limitAlert(title, files) {
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const list = files && files.length ? `<ul style="text-align:left;margin:12px auto 0;max-width:380px;padding-left:20px">${files.map(f => `<li>${esc(f.name)} <b>(${size(f.size)})</b></li>`).join('')}</ul>` : '';
+  if (!window.Swal) { toast(`${title}. The maximum is ${MAX_MB} MB.`); return; }   // CDN blocked: fall back to a toast
+  const cs = getComputedStyle(document.documentElement);
+  return Swal.fire({
+    icon: 'warning', title,
+    html: `The maximum upload size is <b>${MAX_MB} MB</b>. Choose a smaller file or compress it first.${list}`,
+    confirmButtonText: 'OK', confirmButtonColor: cs.getPropertyValue('--ink').trim() || '#15171a',
+    background: cs.getPropertyValue('--card').trim() || '#fff', color: cs.getPropertyValue('--text').trim() || '#15171a',
+  });
+}
 const pdfName = it => {
   return it.file.name.replace(/\.(docx?|pdf)$/i, '') + MODES[mode].suffix + (MODES[mode].ext || '.pdf');
 };
 
 function addFiles(list) {
-  const bad = [];
+  const bad = [], big = [];
   for (const f of list) {
     if (!MODES[mode].re.test(f.name)) { bad.push(f.name); continue; }
+    if (tooBig(f)) { big.push(f); continue; }
     items.push({ file: f, state: 'ready' });
   }
   if (bad.length) toast(`Skipped (not ${mode === 'word' ? 'Word' : 'PDF'} files): ` + bad.join(', '));
+  if (big.length) limitAlert(big.length === 1 ? 'This file is too large' : `${big.length} files are too large`, big);
   draw();
 }
 
@@ -329,21 +347,64 @@ function parseError(t) {
   return (m ? m[1].replace(/&#39;/g, "'").replace(/&amp;/g, '&') : t).slice(0, 300);
 }
 
+// Full-page loading screen for uploads. Appears only if the wait is longer than 250 ms, so small files don't flash it.
+const Loading = (() => {
+  let box, bar, pct, ttl, subEl, timer, suffix = '';
+  const build = () => {
+    if (box) return;
+    box = document.createElement('div'); box.className = 'loading'; box.hidden = true;
+    box.setAttribute('role', 'status'); box.setAttribute('aria-live', 'polite');
+    box.innerHTML = '<div class="loading-card"><div class="spinner" aria-hidden="true"></div><div class="loading-title"></div><div class="loading-sub"></div><div class="loading-bar"><i></i></div><div class="loading-pct"></div></div>';
+    document.body.appendChild(box);
+    bar = box.querySelector('.loading-bar'); pct = box.querySelector('.loading-pct');
+    ttl = box.querySelector('.loading-title'); subEl = box.querySelector('.loading-sub');
+  };
+  const api = {
+    show(sub, sfx = '') {
+      build(); suffix = sfx; ttl.textContent = 'Uploading' + suffix; subEl.textContent = sub || ''; api.progress(null);
+      clearTimeout(timer); timer = setTimeout(() => { box.hidden = false; }, 250);
+    },
+    progress(f) {   // fraction 0..1, or null for "working, no percentage"
+      build();
+      if (f == null) { bar.classList.add('indet'); bar.firstChild.style.width = ''; pct.textContent = ''; return; }
+      bar.classList.remove('indet'); bar.firstChild.style.width = Math.round(f * 100) + '%'; pct.textContent = Math.round(f * 100) + '%';
+    },
+    uploaded() { build(); ttl.textContent = 'Processing' + suffix; api.progress(null); },
+    hide() { clearTimeout(timer); if (box) box.hidden = true; },
+  };
+  return api;
+})();
+
+// POST with upload progress (fetch can't report it). Resolves with the finished XMLHttpRequest, rejects on network failure.
+function send(url, fd, responseType) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', API + url); x.responseType = responseType;
+    x.upload.onprogress = e => { if (e.lengthComputable) Loading.progress(e.loaded / e.total); };
+    x.upload.onload = () => Loading.uploaded();
+    x.onload = () => resolve(x); x.onerror = () => reject(new Error('network'));
+    x.send(fd);
+  });
+}
+
 async function post(url, fd) {
-  let res;
-  try { res = await fetch(API + url, { method: 'POST', body: fd }); }
+  let total = 0;
+  for (const v of fd.values()) if (v instanceof Blob) total += v.size;
+  if (total > MAX_BYTES) { limitAlert(`These files add up to ${size(total)}`); throw new Error(`Upload is over ${MAX_MB} MB`); }
+  let x;
+  try { x = await send(url, fd, 'blob'); }
   catch { throw new Error('Cannot reach the converter. Is server.py running?'); }
-  if (!res.ok) {
-    throw new Error(parseError(await res.text()));
-  }
-  return res.blob();
+  if (x.status === 413) { limitAlert('The upload is too large'); throw new Error(`Upload is over ${MAX_MB} MB`); }   // server (or a proxy) refused it
+  if (x.status < 200 || x.status >= 300) throw new Error(parseError(await x.response.text()));
+  return x.response;
 }
 
 async function mergeAll() {
   busy = true; draw();
   const fd = new FormData();
   items.forEach(i => fd.append('file', i.file, i.file.name));
-  try { save(await post('/merge', fd), 'merged.pdf'); toast(`Merged ${items.length} PDFs`); }
+  Loading.show(`${items.length} PDFs`);
+  try { save(await post('/merge', fd).finally(() => Loading.hide()), 'merged.pdf'); toast(`Merged ${items.length} PDFs`); }
   catch (e) { toast('Merge failed: ' + e.message); }
   busy = false; draw();
 }
@@ -361,12 +422,14 @@ async function convertAll() {
     try {
       const fd = new FormData(); fd.append('file', it.file);
       extra.forEach(([k, v]) => fd.append(k, v));
+      Loading.show(it.file.name, todo.length > 1 ? ` ${n + 1} of ${todo.length}` : '');
       it.blob = await post(MODES[mode].url, fd);
       it.url = URL.createObjectURL(it.blob);
       it.state = 'done';
     } catch (e) { console.error(e); it.error = e.message; it.state = 'error'; }
     progress.firstElementChild.style.width = (++n / todo.length * 100) + '%';
   }
+  Loading.hide();
   busy = false; draw();
   const failed = todo.filter(i => i.state === 'error').length;
   toast(failed ? `${todo.length - failed} done, ${failed} failed` : `Done — ${todo.length} file${todo.length === 1 ? '' : 's'} processed`);
@@ -382,7 +445,8 @@ function save(blob, name) {
 $('merge').onclick = async () => {
   const fd = new FormData();
   items.filter(i => i.state === 'done').forEach(i => fd.append('file', i.blob, pdfName(i)));
-  try { save(await post('/merge', fd), 'merged.pdf'); } catch (e) { toast('Merge failed: ' + e.message); }
+  Loading.show(`${fd.getAll('file').length} PDFs`);
+  try { save(await post('/merge', fd).finally(() => Loading.hide()), 'merged.pdf'); } catch (e) { toast('Merge failed: ' + e.message); }
 };
 
 // minimal store-only ZIP writer
@@ -549,9 +613,23 @@ function layout() {
 }
 function renderAll() { ed.pages.forEach((_, i) => renderPage(i)); }
 
+// The browser rarely has the PDF's own font, and printed text is often justified, so the stand-in text comes out
+// narrower than the printed line and looks "smaller" the moment you start editing. Spread the difference over the
+// word gaps so the edit box fills the same width as the original line.
+const measureCtx = document.createElement('canvas').getContext('2d');
+function fitLine(n, o) {
+  const em = o.size * ed.zoom, target = (o.bbox[2] - o.bbox[0]) * ed.zoom * (o.size / (o.size0 || o.size));
+  const gaps = (o.orig.match(/ /g) || []).length;
+  if (!(target > 0) || !gaps) return;
+  measureCtx.font = `${o.italic ? 'italic ' : ''}${o.bold ? 700 : 400} ${em}px ${fam(o)}`;
+  const extra = (target - measureCtx.measureText(o.orig).width) / gaps;
+  n.style.wordSpacing = Math.max(-0.3 * em, Math.min(em, extra)) + 'px';
+}
+
 function styleText(n, o) {
   n.style.fontFamily = fam(o); n.style.fontWeight = o.bold ? 700 : 400; n.style.fontStyle = o.italic ? 'italic' : 'normal';
   n.style.fontSize = o.size * ed.zoom + 'px'; n.style.color = o.color;
+  if (o.t === 'replace') fitLine(n, o);
   if (o.t === 'text') {   // extra options only exist on text added by the user
     n.style.textDecoration = o.underline ? 'underline' : 'none';
     n.style.textAlign = o.align || 'left';
@@ -1014,16 +1092,20 @@ async function loadLines(sid) {
 
 window.openEditor = async file => {
   if (!file || !/\.pdf$/i.test(file.name)) return toast('Please choose a PDF file');
+  if (tooBig(file)) return limitAlert('This file is too large', [file]);
   if (ed.ops.length && !confirm('Open a new file? Your unsaved edits will be lost.')) return;
   const fd = new FormData(); fd.append('file', file);
   let j;
+  Loading.show(file.name);
   try {
-    let r;
-    try { r = await fetch(API + '/editor/open', { method: 'POST', body: fd }); }
+    let x;
+    try { x = await send('/editor/open', fd, 'text'); }
     catch { throw new Error('Cannot reach the converter. Is server.py running?'); }
-    if (!r.ok) throw new Error(errText(await r.text()));
-    j = await r.json();
+    if (x.status === 413) return limitAlert('This file is too large', [file]);
+    if (x.status < 200 || x.status >= 300) throw new Error(errText(x.responseText));
+    j = JSON.parse(x.responseText);
   } catch (e) { return toast(e.message); }
+  finally { Loading.hide(); }
   Object.assign(ed, { sid: j.sid, name: file.name, pages: j.pages, ops: [], undo: [], redo: [], sel: null, deleted: new Set(), lines: {}, ver: {}, editNode: null, imgs: {}, imgN: 1, hover: null, images: {}, selImg: null, order: [], find: null });
   el('edFind').hidden = true; el('edOpen').hidden = true; el('edMain').hidden = false;
   el('edName').textContent = `${file.name} · ${j.pages.length} page${j.pages.length === 1 ? '' : 's'}`;
@@ -1192,7 +1274,8 @@ function findGo(d, scroll = true) {
   f.cur = (f.cur + d + f.matches.length) % f.matches.length;
   findCompute(); if (!scroll) return;
   const m = f.matches[f.cur], b = ed.lines[m.page][m.line].bbox;
-  scrollBy({ top: stageOf(m.page).getBoundingClientRect().top + b[1] * ed.zoom - innerHeight / 3, behavior: 'smooth' });
+  const stuck = el('edSticky').getBoundingClientRect().bottom;   // keep the match below the stuck toolbar + find panel
+  scrollBy({ top: stageOf(m.page).getBoundingClientRect().top + b[1] * ed.zoom - (stuck + (innerHeight - stuck) / 3), behavior: 'smooth' });
 }
 function openFind() {
   if (!ed.sid) return;

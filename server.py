@@ -366,6 +366,14 @@ def pdf_to_word():
         shutil.rmtree(work, ignore_errors=True)
     return send_file(data, mimetype=DOCX_MIME)
 
+# Upload limit (also checked in the browser: MAX_MB in app.js). Keep nginx client_max_body_size at or above this.
+MAX_UPLOAD_MB = int(os.environ.get('MAX_UPLOAD_MB', '100'))
+app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_MB * 1024 * 1024
+
+@app.errorhandler(413)
+def _too_large(e):
+    return Response(f'<p>This upload is too large. The maximum is {MAX_UPLOAD_MB} MB.</p>', status=413, mimetype='text/html')
+
 @app.errorhandler(Exception)
 def _unhandled(e):
     """Any unexpected crash becomes a short readable message instead of a traceback page."""
@@ -475,14 +483,14 @@ def editor_lines(sid, n):
                 return {'t': s['text'], 'size': round(s['size'], 2), 'color': '#%06x' % s['color'], 'font': s['font'],
                         'bold': bool(f & 16) or 'bold' in n,
                         'italic': bool(f & 2) or 'italic' in n or 'oblique' in n,
-                        'serif': bool(f & 1), 'mono': bool(f & 8)}
-            out.append({'bbox': [x0, y0, x1, y1], 'origin': list(main['origin']),
+                        'serif': bool(f & 4), 'mono': bool(f & 8)}   # PyMuPDF flags: 1 superscript, 2 italic, 4 serif, 8 mono, 16 bold
+            out.append({'bbox': [x0, y0, x1, y1], 'origin': [ln['spans'][0]['origin'][0], main['origin'][1]],   # line starts where its FIRST span starts (books set every word as its own span)
                         'spans': [_style(s) for s in ln['spans']],
                         'text': ''.join(s['text'] for s in ln['spans']).rstrip(),
                         'size': round(main['size'], 2), 'color': '#%06x' % main['color'], 'font': main['font'],
                         'bold': bool(fl & 16) or 'bold' in fname,
                         'italic': bool(fl & 2) or 'italic' in fname or 'oblique' in fname,
-                        'serif': bool(fl & 1), 'mono': bool(fl & 8), 'bg': list(bg)})
+                        'serif': bool(fl & 4), 'mono': bool(fl & 8), 'bg': list(bg)})
     return {'lines': out}
 
 @app.get('/editor/<sid>/images/<int:n>')
@@ -598,21 +606,23 @@ def _embedded_font(op, page):
         return None
     return min(cands, key=lambda c: c[0])[1] if cands else None
 
-def _orig_font(op, text, page):
-    """Keep the line's own typeface: reuse the embedded font when it has every glyph needed, else a real font of the same family."""
+_FONT_PATHS = {}   # inserted font name -> file path (fitz.Font needs the file again to measure text)
+_SPACES = ' \u00a0'
+
+def _source_fonts(op, page):
+    """The line's own typeface as (inserted font name, fitz.Font): the font embedded in the PDF first, then a real copy of the family."""
     name = op.get('font')
-    if not name or not text:
-        return None
+    if not name:
+        return
     bold, italic = bool(op.get('bold')), bool(op.get('italic'))
     try:
         f = _embedded_font(op, page)
         if f:
             buf = page.parent.extract_font(f[0])[3]
-            # subset fonts only hold the glyphs the document already used, and often have no character map at all
-            if buf and all(fitz.Font(fontbuffer=buf).has_glyph(ord(c)) for c in text if c not in '  '):
+            if buf:
                 fname = 'o%d' % f[0]
                 page.insert_font(fontname=fname, fontbuffer=buf)
-                return fname
+                yield fname, fitz.Font(fontbuffer=buf)
     except Exception:
         pass
     files = _SYS_FONTS.get(_font_family(name))
@@ -624,11 +634,30 @@ def _orig_font(op, text, page):
             try:
                 fnm = 's' + re.sub(r'\W', '', os.path.basename(p))
                 page.insert_font(fontname=fnm, fontfile=p)
-                if all(fitz.Font(fontfile=p).has_glyph(ord(c)) for c in text if c not in '  '):
-                    return fnm
+                _FONT_PATHS[fnm] = p
+                yield fnm, fitz.Font(fontfile=p)
             except Exception:
                 pass
+
+def _orig_font(op, text, page):
+    """Keep the line's own typeface: reuse it when it has every glyph the new text needs."""
+    if not text:
+        return None
+    for fname, fo in _source_fonts(op, page):
+        if all(fo.has_glyph(ord(c)) for c in text if c not in _SPACES):
+            return fname
     return None
+
+def _fobj(page, fname):
+    """A fitz.Font for an inserted font name, so text is measured with the font that is actually drawn."""
+    try:
+        if fname[0] == 'o' and fname[1:].isdigit():
+            return fitz.Font(fontbuffer=page.parent.extract_font(int(fname[1:]))[3])
+        if fname in _FONT_PATHS:
+            return fitz.Font(fontfile=_FONT_PATHS[fname])
+        return fitz.Font(fname)
+    except Exception:
+        return fitz.Font('helv')
 
 def _font_for(op, text, page):
     bold, italic = bool(op.get('bold')), bool(op.get('italic'))
@@ -647,8 +676,57 @@ def _font_for(op, text, page):
         if os.path.exists(p):
             name = 'u' + re.sub(r'\W', '', fn)
             page.insert_font(fontname=name, fontfile=p)
+            _FONT_PATHS[name] = p
             return name
     return 'helv'
+
+def _layout(page, op, text, size):
+    """Lay a line out as ([(font name, chunk, dx)], total width).
+
+    A font subset embedded in a PDF usually has no space glyph (spaces would collapse) and lacks some letters, so
+    words are placed one at a time, and a letter the subset lacks is drawn with a stand-in font instead of
+    switching the whole line to another typeface."""
+    text = text.replace('\u00a0', ' ')
+    prim = next(iter(_source_fonts(op, page)), None) if op.get('font') else None
+    letters = [c for c in text if c not in _SPACES]
+    covered = lambda c: c in _SPACES or (prim is not None and prim[1].has_glyph(ord(c)))
+    miss = sum(1 for c in letters if not covered(c))
+    if prim and miss == 0:
+        names = [prim[0]] * len(text)
+    elif prim and miss <= 0.2 * len(letters):   # mostly the original font; stand-ins only for the few missing letters
+        names = [prim[0] if covered(c) else _font_for(dict(op, font=None), c, page) for c in text]
+    else:
+        names = [_font_for(op, text, page)] * len(text)
+    if not names:
+        return [], 0.0
+    fonts = {}
+    def fo(n):
+        if n not in fonts:
+            fonts[n] = prim[1] if prim and n == prim[0] else _fobj(page, n)
+        return fonts[n]
+    sf = prim[1] if prim else fo(names[0])
+    if len(set(names)) == 1 and (' ' not in text or sf.has_glyph(32)):
+        return [(names[0], text, 0.0)], fo(names[0]).text_length(text, fontsize=size)
+    sw = sf.text_length(' ', fontsize=size) if sf.has_glyph(32) else size / 3
+    pieces, x, i = [], 0.0, 0
+    for k, word in enumerate(text.split(' ')):
+        if k:
+            x += sw
+        j = 0
+        while j < len(word):
+            n, e = names[i + j], j
+            while e < len(word) and names[i + e] == n:
+                e += 1
+            pieces.append((n, word[j:e], x))
+            x += fo(n).text_length(word[j:e], fontsize=size)
+            j = e
+        i += len(word) + 1
+    return pieces, x
+
+def _draw(page, pieces, x, y, dm, size, color, **kw):
+    for fname, chunk, dx in pieces:
+        page.insert_text(fitz.Point(x + dx, y) * dm, chunk, fontname=fname, fontsize=size,
+                         color=color, rotate=page.rotation, **kw)
 
 def _put_text(page, op, x, baseline, text, dm):
     size = float(op.get('size', 12))
@@ -656,9 +734,8 @@ def _put_text(page, op, x, baseline, text, dm):
     for i, line in enumerate(text.split('\n')):
         if not line:
             continue
-        pt = fitz.Point(x, baseline + i * size * 1.2) * dm
-        page.insert_text(pt, line, fontname=_font_for(op, line, page), fontsize=size,
-                         color=color, rotate=page.rotation)
+        pieces, _ = _layout(page, op, line, size)
+        _draw(page, pieces, x, baseline + i * size * 1.2, dm, size, color)
 
 def _put_textbox(page, o, dm):
     """Text added by the user: font style, underline, alignment, opacity and optional background fill."""
@@ -682,8 +759,8 @@ def _put_textbox(page, o, dm):
             continue
         shift = {'center': (bw - w) / 2, 'right': bw - w}.get(o.get('align'), 0)
         lx, base = x0 + shift, y0 + size + i * lh
-        page.insert_text(fitz.Point(lx, base) * dm, line, fontname=_font_for(o, line, page), fontsize=size,
-                         color=color, rotate=page.rotation, fill_opacity=opacity)
+        pieces, _ = _layout(page, o, line, size)
+        _draw(page, pieces, lx, base, dm, size, color, fill_opacity=opacity)
         if o.get('underline'):
             uy = base + size * 0.12
             page.draw_line(fitz.Point(lx, uy) * dm, fitz.Point(lx + w, uy) * dm, color=color,
@@ -691,20 +768,26 @@ def _put_textbox(page, o, dm):
 
 
 def _run_width(page, op, text):
-    fn = _font_for(op, text, page)
-    size = float(op.get('size', 12))
-    try:
-        return fitz.get_text_length(text, fontname=fn, fontsize=size)
-    except Exception:
-        return fitz.Font('helv').text_length(text, fontsize=size)
+    return _layout(page, op, text, float(op.get('size', 12)))[1]
 
 def _anchor_x(page, o, x, new_w):
-    """A line that was centred on the page stays centred after its text changes."""
+    """A line that was centred on the page stays centred after its text changes.
+    A left-aligned paragraph line also has its middle near the page centre, so lines that share their left edge
+    with other lines are left alone (otherwise they slide sideways when the text gets shorter or longer)."""
     try:
-        x0, _, x1, _ = o['bbox']
+        x0, y0, x1, y1 = o['bbox']
         cx = (x0 + x1) / 2
         if abs(cx - page.rect.width / 2) < 4 and (x1 - x0) < page.rect.width * 0.9:
-            return cx - new_w / 2
+            same_left = 0
+            for b in page.get_text('dict')['blocks']:
+                if b.get('type') != 0:
+                    continue
+                for ln in b['lines']:
+                    lx0, ly0, lx1, _ = ln['bbox']
+                    if abs(ly0 - y0) > 1 and abs(lx0 - x0) < 6 and lx1 - lx0 > 20:   # 6pt: first lines may hang a quote mark
+                        same_left += 1
+            if same_left < 2:
+                return cx - new_w / 2
     except Exception:
         pass
     return x
@@ -747,10 +830,9 @@ def _put_spans(page, o, dm):
     x = _anchor_x(page, o, x, sum(_run_width(page, dict(st, size=float(st['size']) * k), txt) for st, txt in runs))
     for st, txt in runs:
         op = dict(st, size=float(st['size']) * k)
-        pt = fitz.Point(x, y) * dm
-        page.insert_text(pt, txt, fontname=_font_for(op, txt, page), fontsize=float(op['size']),
-                         color=_hex(st.get('color', '#000000')), rotate=page.rotation)
-        x += _run_width(page, op, txt)
+        pieces, w = _layout(page, op, txt, float(op['size']))
+        _draw(page, pieces, x, y, dm, float(op['size']), _hex(st.get('color', '#000000')))
+        x += w
 
 def _remove_images(doc, page, xrefs):
     """Drop existing images from this page only (the image object itself may be shared with other pages)."""
@@ -1049,6 +1131,7 @@ def admin_dashboard():
     from datetime import date, timedelta
     totals, by_tool, _sessions_n, saves = db.admin_stats()
     recent, _ = db.recent_operations(1, 6)
+    failures, _ = db.recent_operations(1, 4, status='failed')
     # fill missing days for the activity chart
     got = {str(r['d']): r for r in db.ops_per_day(14)}
     days = []
@@ -1056,7 +1139,7 @@ def admin_dashboard():
         d = date.today() - timedelta(days=i)
         r = got.get(str(d))
         days.append(dict(label=d.strftime('%d %b'), n=int(r['n']) if r else 0, failed=int(r['failed'] or 0) if r else 0))
-    return render_template('admin.html', totals=totals, by_tool=by_tool, saves=saves, recent=recent, days=days)
+    return render_template('admin.html', totals=totals, by_tool=by_tool, saves=saves, recent=recent, failures=failures, days=days)
 
 @app.get('/superadmin/latest')
 @admin_required

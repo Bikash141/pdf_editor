@@ -10,9 +10,32 @@
 <form class="login" method="post" autocomplete="on">
   <h1>Superadmin</h1>
   <label for="u">Username</label><input id="u" name="username" required autofocus autocomplete="username">
-  <label for="p">Password</label><input id="p" name="password" type="password" required autocomplete="current-password">
+  <label for="p">Password</label>
+  <div class="pw-wrap">
+    <input id="p" name="password" type="password" required autocomplete="current-password">
+    <button type="button" class="eye" id="eye" aria-label="Show password" aria-pressed="false">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path class="eye-open" d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle class="eye-open" cx="12" cy="12" r="3"/>
+        <path class="eye-off" d="M17.94 17.94A10.9 10.9 0 0 1 12 19C5 19 1 12 1 12a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M1 1l22 22" style="display:none"/>
+      </svg>
+    </button>
+  </div>
   {% if error %}<div class="err" role="alert">{{ error }}</div>{% endif %}
   <button class="btn" type="submit">Sign in</button>
 </form>
+<script>
+(function () {
+  var p = document.getElementById('p'), b = document.getElementById('eye');
+  b.addEventListener('click', function () {
+    var show = p.type === 'password';
+    p.type = show ? 'text' : 'password';
+    b.setAttribute('aria-pressed', show);
+    b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+    b.querySelectorAll('.eye-open').forEach(function (e) { e.style.display = show ? 'none' : ''; });
+    b.querySelector('.eye-off').style.display = show ? '' : 'none';
+    p.focus();
+  });
+})();
+</script>
 </body>
 </html>

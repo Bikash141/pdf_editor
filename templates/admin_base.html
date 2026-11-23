@@ -6,6 +6,8 @@
 <title>{% block title %}Superadmin{% endblock %} – BP PDF Editor</title>
 <meta name="robots" content="noindex">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23152d8d'/%3E%3Ctext x='16' y='22' font-family='Arial,sans-serif' font-size='16' font-weight='800' text-anchor='middle' fill='%23f90489'%3EBP%3C/text%3E%3C/svg%3E">
+<script>try { var t = localStorage.getItem('adm-theme'); if (t === 'pro') document.documentElement.setAttribute('data-atheme', 'pro'); } catch (e) {}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/admin.css">
 </head>
@@ -41,6 +43,10 @@
       <a href="/" target="_blank" rel="noopener"><svg><use href="#a-site"/></svg>View website</a>
     </nav>
     <div class="side-foot">
+      <div class="themes" role="group" aria-label="Dashboard theme">
+        <button type="button" data-t="studio" aria-pressed="true">Studio</button>
+        <button type="button" data-t="pro" aria-pressed="false">Professional</button>
+      </div>
       <div class="who"><i>{{ session.admin[:1]|upper }}</i><span><b>{{ session.admin }}</b><small>Superadmin</small></span></div>
       <form method="post" action="/superadmin/logout"><button class="out" type="submit"><svg><use href="#a-out"/></svg>Sign out</button></form>
     </div>
@@ -52,5 +58,22 @@
     </main>
   </div>
 </div>
+<script>
+(function () {
+  var root = document.documentElement, btns = document.querySelectorAll('.themes button');
+  function paint() {
+    var cur = root.getAttribute('data-atheme') === 'pro' ? 'pro' : 'studio';
+    btns.forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.t === cur)); });
+  }
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (b.dataset.t === 'pro') root.setAttribute('data-atheme', 'pro'); else root.removeAttribute('data-atheme');
+      try { localStorage.setItem('adm-theme', b.dataset.t); } catch (e) {}
+      paint();
+    });
+  });
+  paint();
+})();
+</script>
 </body>
 </html>

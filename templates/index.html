@@ -81,6 +81,7 @@
       </ul>
     </div>
     <div id="edMain" hidden>
+      <div class="ed-sticky" id="edSticky">
       <div class="ed-bar" id="edBar">
         <div class="grp" id="edTools">
           <button data-tool="select" class="active" title="Click any text to edit it; click an added item to select it">Edit text</button>
@@ -126,7 +127,6 @@
           <button class="link-btn" id="edClose">Close file</button>
         </div>
       </div>
-      <div class="ed-name" id="edName"></div>
       <div class="ed-find" id="edFind" hidden>
         <input type="search" id="edFindQ" placeholder="Find text…" aria-label="Find text" autocomplete="off">
         <input type="text" id="edFindR" placeholder="Replace with…" aria-label="Replace with" autocomplete="off">
@@ -138,6 +138,8 @@
         <button type="button" id="edRepAll">Replace all</button>
         <button type="button" id="edFindClose" aria-label="Close find">✕</button>
       </div>
+      </div>
+      <div class="ed-name" id="edName"></div>
       <div id="edPages"></div>
       <div class="sig-modal" id="sigModal" hidden role="dialog" aria-modal="true" aria-label="Draw your signature">
         <div class="sig-card">
@@ -200,6 +202,7 @@
 {% include "partials/footer.html" %}
 <div id="toasts" aria-live="assertive"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.10.8/dist/sweetalert2.all.min.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -2,45 +2,95 @@
 {% set active = 'dash' %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
-  <div class="page-title">
-    <div><h1>Dashboard</h1><p>Welcome back, {{ session.admin }}. Usage across all tools, updated on every page load.</p></div>
+{% macro tn(t) -%}{{ {'editor_open': 'Editor opened', 'pdf2word': 'PDF to Word', 'word2pdf': 'Word to PDF', 'protect': 'Protect PDF'}.get(t, (t or 'Unknown')|replace('_', ' ')|capitalize) }}{%- endmacro %}
+{% macro when(x) -%}{{ x.strftime('%d %b, %H:%M') if x.strftime is defined else x }}{%- endmacro %}
+
+{% set rate = ((totals.ok / totals.total * 100) if totals.total else 100)|round(1) %}
+{% set failed_n = (totals.total - totals.ok)|int %}
+{% set mx = (days|map(attribute='n')|max) or 1 %}
+{% set total14 = days|sum(attribute='n') %}
+{% set failed14 = days|sum(attribute='failed') %}
+{% set today_n = days[-1].n %}{% set yest_n = days[-2].n %}
+{% set recent_fail = days[-1].failed + days[-2].failed %}
+
+<div class="dash">
+  <div class="dash-head">
+    <div>
+      {% if not totals.total %}
+        <h1>No activity yet</h1>
+        <p>Operations appear here as soon as someone uses a tool.</p>
+      {% else %}
+        {% if rate < 95 %}<h1>Success rate is below 95%</h1>
+        {% elif recent_fail %}<h1>{{ recent_fail }} failed operation{{ '' if recent_fail == 1 else 's' }} in the last two days</h1>
+        {% else %}<h1>Everything is running normally</h1>{% endif %}
+        <p>{{ totals.total }} operations so far, {{ totals.last_24h|int }} in the last 24 hours. <span id="stamp">Updated just now</span></p>
+      {% endif %}
+    </div>
     <div class="pt-actions"><a class="btn ghost sm" href="/superadmin">↻ Refresh</a><a class="btn sm" href="/superadmin/password">Change password</a></div>
   </div>
 
-  {% set rate = ((totals.ok / totals.total * 100) if totals.total else 100)|round(1) %}
-  {% set failed_n = (totals.total - totals.ok)|int %}
-  <section class="stats" aria-label="Summary">
-    <div class="stat"><div class="si"><svg><use href="#a-ops"/></svg></div><span>Operations</span><b>{{ totals.total }}</b><small>all time</small></div>
-    <div class="stat"><div class="si"><svg><use href="#a-clock"/></svg></div><span>Last 24 hours</span><b>{{ totals.last_24h|int }}</b><small>operations</small></div>
-    <div class="stat"><div class="si {{ 'ok' if rate >= 95 else 'bad' }}"><svg><use href="#a-ok"/></svg></div><span>Success rate</span><b class="{{ 'good' if rate >= 95 else 'warn' }}">{{ rate }}%</b><small>{{ failed_n }} failed</small></div>
-    <div class="stat"><div class="si"><svg><use href="#a-speed"/></svg></div><span>Avg duration</span><b>{{ totals.avg_ms|round|int }}<em> ms</em></b><small>per operation</small></div>
-    <div class="stat"><div class="si"><svg><use href="#a-data"/></svg></div><span>Data processed</span><b>{{ totals.in_bytes|int|size }}</b><small>input size</small></div>
-    <div class="stat"><div class="si"><svg><use href="#a-save"/></svg></div><span>Editor saves</span><b>{{ saves }}</b><small>exports</small></div>
-  </section>
-
-  <div class="two">
-    <section class="card-s" aria-label="Activity">
-      <div class="card-h"><h2>Activity</h2><span class="legend"><i class="k ok"></i>OK <i class="k bad"></i>Failed · last 14 days</span></div>
-      {% set mx = (days|map(attribute='n')|max) or 1 %}
-      <div class="chart" role="img" aria-label="Operations per day for the last 14 days">
-        {% for d in days %}
-        <div class="col" title="{{ d.label }}: {{ d.n }} operations, {{ d.failed }} failed">
-          <em class="val">{{ d.n if d.n }}</em>
-          <div class="bar" style="height: {{ (d.n / mx * 100)|round(1) }}%">{% if d.failed %}<div class="f" style="height: {{ (d.failed / d.n * 100)|round(1) }}%"></div>{% endif %}</div>
-          <span>{{ d.label[:2] }}</span>
-        </div>
-        {% endfor %}
+  <div class="dgrid">
+    <section class="panel" aria-label="Activity over the last 14 days">
+      <div class="p-head">
+        <h2>Last 14 days</h2>
+        <span class="key"><span class="ok"><i></i>Completed</span><span class="bad"><i></i>Failed</span></span>
       </div>
+      <p class="p-note">{{ total14 }} operations, about {{ (total14 / 14)|round(1) }} a day. Busiest day: {{ mx if total14 else 0 }}.</p>
+      <ol class="pages" role="img" aria-label="Operations per day for the last 14 days: {{ total14 }} in total, {{ failed14 }} failed">
+        {% for d in days %}
+        <li class="pg{{ ' today' if loop.last }}{{ '' if d.n else ' zero' }}" title="{{ d.label }}: {{ d.n }} operation{{ '' if d.n == 1 else 's' }}, {{ d.failed }} failed"
+            style="--h: {{ (d.n / mx * 100)|round(1) }}%; --f: {{ ((d.failed / d.n * 100)|round(1)) if d.n else 0 }}%; --i: {{ loop.index0 }}">
+          <b class="v">{{ d.n if d.n }}</b>
+          <span class="well"><i class="sheet"></i></span>
+          <span class="lbl"><span class="d">{{ d.label[:2] }}</span><span class="m">{% if loop.first or d.label[:2] == '01' %}{{ d.label[3:] }}{% endif %}</span></span>
+        </li>
+        {% endfor %}
+      </ol>
     </section>
 
-    <section class="card-s" aria-label="By tool">
-      <div class="card-h"><h2>By tool</h2><a class="hint-link" href="/superadmin/operations">View all</a></div>
+    <section class="panel" aria-label="Key figures">
+      <div class="p-head"><h2>At a glance</h2></div>
+      <dl class="figs">
+        <dt>Success rate</dt>
+        <dd><b class="{{ 'good' if rate >= 95 else 'bad' }}">{{ rate }}%</b><small>{{ failed_n }} of {{ totals.total }} failed</small></dd>
+        <dt>Last 24 hours</dt>
+        <dd><b>{{ totals.last_24h|int }}</b><small>{{ today_n }} today, {{ yest_n }} yesterday</small></dd>
+        <dt>Average time</dt>
+        <dd><b>{{ totals.avg_ms|round|int }} ms</b><small>per operation</small></dd>
+        <dt>Data processed</dt>
+        <dd><b>{{ totals.in_bytes|int|size }}</b><small>uploaded files</small></dd>
+        <dt>Editor saves</dt>
+        <dd><b>{{ saves }}</b><small>edited PDFs saved</small></dd>
+      </dl>
+    </section>
+  </div>
+
+  {% if failures %}
+  <section class="panel fail-panel" aria-label="Recent failures">
+    <div class="p-head"><h2>Recent failures</h2><a class="hint-link" href="/superadmin/operations?status=failed">See all failures →</a></div>
+    <ul class="fails">
+      {% for o in failures %}
+      <li>
+        <div>
+          <div class="fn" title="{{ o.filename }}">{{ o.filename or '(no file)' }}</div>
+          <div class="fe">{{ o.error or 'No error message was recorded.' }}</div>
+        </div>
+        <div class="fm2"><span class="tag">{{ tn(o.tool) }}</span><span>{{ when(o.created_at) }}</span></div>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <div class="dgrid low">
+    <section class="panel" aria-label="Operations by tool">
+      <div class="p-head"><h2>By tool</h2><a class="hint-link" href="/superadmin/operations">View all</a></div>
       <ul class="tools">
         {% set top = (by_tool|map(attribute='n')|max) or 1 %}
         {% for r in by_tool %}
         <li>
-          <a href="/superadmin/operations?tool={{ r.tool }}">
-            <span class="tn">{{ r.tool }}</span>
+          <a href="/superadmin/operations?tool={{ r.tool }}" title="{{ r.tool }}">
+            <span class="tn">{{ tn(r.tool) }}</span>
             <span class="meter"><i style="width: {{ (r.n / top * 100)|round }}%"></i></span>
             <span class="tc">{{ r.n }}{% if r.failed|int %} <em class="bad">{{ r.failed|int }} failed</em>{% endif %}</span>
           </a>
@@ -48,21 +98,36 @@
         {% else %}<li class="empty">No operations yet.</li>{% endfor %}
       </ul>
     </section>
-  </div>
 
-  <section class="card-s flush" aria-label="Latest operations">
-    <div class="card-h pad"><h2>Latest operations</h2><a class="btn ghost sm" href="/superadmin/latest">See latest operations →</a></div>
-    <div class="tbl-wrap"><table class="t">
-      <thead><tr><th>When</th><th>Tool</th><th>File</th><th>Time</th><th>Status</th></tr></thead>
-      <tbody>
-      {% for o in recent %}<tr>
-        <td data-l="When">{{ o.created_at }}</td>
-        <td data-l="Tool"><span class="tag">{{ o.tool }}</span></td>
-        <td data-l="File" class="wrap-cell">{{ o.filename }}</td>
-        <td data-l="Time">{{ o.duration_ms }} ms</td>
-        <td data-l="Status"><span class="pill {{ 'ok' if o.success else 'bad' }}">{{ o.status_code }}</span></td>
-      </tr>{% else %}<tr class="none"><td colspan="5">No operations yet.</td></tr>{% endfor %}
-      </tbody>
-    </table></div>
-  </section>
+    <section class="panel flush" aria-label="Latest operations">
+      <div class="p-head pad"><h2>Latest operations</h2><a class="hint-link" href="/superadmin/latest">Open the live feed →</a></div>
+      <div class="tbl-wrap"><table class="t">
+        <thead><tr><th>Tool</th><th>File</th><th>Time taken</th><th>Result</th><th>When</th></tr></thead>
+        <tbody>
+        {% for o in recent %}<tr class="{{ '' if o.success else 'failed' }}">
+          <td data-l="Tool"><span class="tag">{{ tn(o.tool) }}</span></td>
+          <td data-l="File" class="wrap-cell">{{ o.filename or '(no file)' }}{% if o.error %}<span class="fe-inline">{{ o.error }}</span>{% endif %}</td>
+          <td data-l="Time taken">{{ o.duration_ms }} ms</td>
+          <td data-l="Result"><span class="pill {{ 'ok' if o.success else 'bad' }}">{{ 'OK' if o.success else 'Failed ' ~ o.status_code }}</span></td>
+          <td data-l="When">{{ when(o.created_at) }}</td>
+        </tr>{% else %}<tr class="none"><td colspan="5">No operations yet. They show up here as soon as someone uses a tool.</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </section>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var el = document.getElementById('stamp');
+    if (!el) return;
+    var t0 = Date.now(), at = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    function paint() {
+      var m = Math.floor((Date.now() - t0) / 60000);
+      el.textContent = 'Updated ' + at + (m ? ', ' + m + ' min ago' : '');
+    }
+    paint();
+    setInterval(paint, 30000);
+  })();
+</script>
 {% endblock %}
